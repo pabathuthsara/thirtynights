@@ -7,7 +7,7 @@ import * as Haptics from 'expo-haptics';
 import { Button } from '@/components/Buttons';
 import { Screen } from '@/components/Screen';
 import { Glow, Sparkle } from '@/components/Sparkle';
-import { colors, gradients, motion, radii, textStyles, typography, weight } from '@/theme';
+import { colors, gradients, motion, nativeAnimationDriver, night, radii, textStyles, typography, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { keepsakeDecorations } from '@/data/keepsakeAssets';
 
@@ -17,7 +17,7 @@ const ENVELOPE_H = 160;
 const SEAL = 78;
 
 /**
- * The sealing ceremony.
+ * The sealing ceremony. It ends sealed — the reveal is its own screen now.
  *
  * Everything lives in one centred stage, and the seal is an absolutely
  * positioned overlay that fills that same stage. Its resting transform is
@@ -25,10 +25,15 @@ const SEAL = 78;
  * version animated to a hard-coded `translateY: -75` that only lined up with
  * the target ring at one screen height.
  *
- * Beats (≈1.25s, per §11.2): the take folds inward → the flap closes → the
- * seal presses down → warm light contracts into the wax → the words arrive.
+ * Beats: the take folds inward → the flap closes → the seal presses down →
+ * warm light contracts into the wax → the words arrive.
+ *
+ * The sticker used to spring out over the receding envelope, which left a pale
+ * slab of letter sitting behind it — two objects competing for one moment. It
+ * now has a stage of its own in `RewardScreen`, so this screen can simply end
+ * on a sealed envelope and hand over.
  */
-export function SealingScreen({ onDone }: { onDone: () => void }) {
+export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number; onDone: () => void }) {
   const fold = useRef(new Animated.Value(0)).current;
   const flap = useRef(new Animated.Value(0)).current;
   const drop = useRef(new Animated.Value(0)).current;
@@ -39,8 +44,8 @@ export function SealingScreen({ onDone }: { onDone: () => void }) {
   const [pressed, setPressed] = useState(false);
 
   useEffect(() => {
-    AccessibilityInfo.announceForAccessibility('Sealed for later.');
-  }, []);
+    AccessibilityInfo.announceForAccessibility(`Night ${nightIndex} is sealed.`);
+  }, [nightIndex]);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -48,36 +53,40 @@ export function SealingScreen({ onDone }: { onDone: () => void }) {
       setPressed(true);
       // Reduced motion removes motion, not the confirmation — hold long enough
       // for the words to actually be read.
-      const timer = setTimeout(onDone, 1400);
+      const timer = setTimeout(onDone, 1500);
       return () => clearTimeout(timer);
     }
 
     const sequence = Animated.sequence([
       // 1 — the take folds inward and the flap comes down over it.
       Animated.parallel([
-        Animated.timing(fold, { toValue: 1, duration: 300, easing: motion.easeGentle, useNativeDriver: true }),
-        Animated.timing(flap, { toValue: 1, duration: 380, easing: motion.easeSoft, useNativeDriver: true }),
+        Animated.timing(fold, { toValue: 1, duration: 300, easing: motion.easeGentle, useNativeDriver: nativeAnimationDriver }),
+        Animated.timing(flap, { toValue: 1, duration: 380, easing: motion.easeSoft, useNativeDriver: nativeAnimationDriver }),
       ]),
       // 2 — the wax presses down onto the fold.
-      Animated.timing(drop, { toValue: 1, duration: 380, easing: motion.easeGentle, useNativeDriver: true }),
+      Animated.timing(drop, { toValue: 1, duration: 380, easing: motion.easeGentle, useNativeDriver: nativeAnimationDriver }),
       // 3 — contact.
       Animated.parallel([
         Animated.sequence([
-          Animated.timing(impact, { toValue: 1, duration: 90, easing: motion.easeSoft, useNativeDriver: true }),
-          Animated.spring(impact, { toValue: 0, damping: 9, stiffness: 260, mass: 0.5, useNativeDriver: true }),
+          Animated.timing(impact, { toValue: 1, duration: 90, easing: motion.easeSoft, useNativeDriver: nativeAnimationDriver }),
+          Animated.spring(impact, { toValue: 0, damping: 9, stiffness: 260, mass: 0.5, useNativeDriver: nativeAnimationDriver }),
         ]),
-        Animated.timing(light, { toValue: 1, duration: 520, easing: motion.easeGentle, useNativeDriver: true }),
-        Animated.timing(words, { toValue: 1, duration: 460, delay: 120, easing: motion.easeSoft, useNativeDriver: true }),
+        Animated.timing(light, { toValue: 1, duration: 520, easing: motion.easeGentle, useNativeDriver: nativeAnimationDriver }),
       ]),
+      // 4 — a held breath, then the words settle under the sealed envelope.
+      Animated.delay(220),
+      Animated.timing(words, { toValue: 1, duration: 460, easing: motion.easeSoft, useNativeDriver: nativeAnimationDriver }),
     ]);
 
-    // Fire the haptic exactly when the wax lands, not when everything finishes.
+    // Fire the haptics exactly when the wax lands and when the sticker pops,
+    // not when everything finishes.
     const contact = setTimeout(() => {
       setPressed(true);
-      if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => undefined);
     }, 1060);
 
     sequence.start(({ finished }) => {
+      // A short beat on the sealed envelope, then the reveal takes over.
       if (finished) setTimeout(onDone, 620);
     });
 
@@ -85,10 +94,10 @@ export function SealingScreen({ onDone }: { onDone: () => void }) {
       clearTimeout(contact);
       sequence.stop();
     };
-  }, [drop, flap, fold, impact, light, onDone, reducedMotion, words]);
+  }, [drop, flap, fold, impact, light, nightIndex, onDone, reducedMotion, words]);
 
   return (
-    <Screen scroll={false} contentStyle={styles.center}>
+    <Screen scroll={false} variant="night" contentStyle={styles.center}>
       <View style={styles.stage}>
         {/* The take, folding inward and fading under the flap. */}
         <Animated.View
@@ -183,7 +192,7 @@ export function SealingScreen({ onDone }: { onDone: () => void }) {
 
         {pressed ? (
           <>
-            <Sparkle size={13} color={colors.brass} twinkle style={styles.sparkleOne} />
+            <Sparkle size={13} color={night.candle} twinkle style={styles.sparkleOne} />
             <Sparkle size={10} color={colors.rose} twinkle delay={340} style={styles.sparkleTwo} />
           </>
         ) : null}
@@ -199,7 +208,7 @@ export function SealingScreen({ onDone }: { onDone: () => void }) {
         ]}
       >
         <Text accessibilityRole="header" style={styles.sealed}>Sealed for later.</Text>
-        <Text style={styles.sealedSub}>One take, kept whole.</Text>
+        <Text style={styles.sealedSub}>Night {nightIndex} is tucked away.</Text>
       </Animated.View>
     </Screen>
   );
@@ -227,15 +236,15 @@ export function GeneratingScreen({ mini = false, steps, onDone }: {
   useEffect(() => {
     if (reducedMotion) return;
     const animation = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 2400, easing: motion.easeInOut, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0, duration: 2400, easing: motion.easeInOut, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1, duration: 2400, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
+      Animated.timing(pulse, { toValue: 0, duration: 2400, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
     ]));
     animation.start();
     return () => animation.stop();
   }, [pulse, reducedMotion]);
 
   return (
-    <Screen scroll={false} contentStyle={styles.center}>
+    <Screen scroll={false} variant="night" contentStyle={styles.center}>
       <Animated.View
         pointerEvents="none"
         style={{
@@ -243,7 +252,7 @@ export function GeneratingScreen({ mini = false, steps, onDone }: {
           transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.12] }) }],
         }}
       >
-        <Glow size={300} color={colors.rose} opacity={0.34} style={styles.generatingGlow} />
+        <Glow size={300} color={colors.rose} opacity={0.4} style={styles.generatingGlow} />
       </Animated.View>
 
       <Text accessibilityRole="header" style={styles.reading}>
@@ -387,13 +396,16 @@ const styles = StyleSheet.create({
   },
   sealed: {
     ...textStyles.title,
+    color: night.text,
     fontSize: 36,
     lineHeight: 43,
     textAlign: 'center',
   },
   sealedSub: {
     ...textStyles.bodySmall,
+    color: night.textDim,
     textAlign: 'center',
+    maxWidth: 300,
   },
 
   generatingGlow: {
@@ -402,12 +414,14 @@ const styles = StyleSheet.create({
   },
   reading: {
     ...textStyles.title,
+    color: night.text,
     fontSize: 36,
     lineHeight: 43,
     textAlign: 'center',
   },
   generatingBody: {
     ...textStyles.bodySmall,
+    color: night.textDim,
     textAlign: 'center',
     maxWidth: 330,
   },
@@ -427,7 +441,7 @@ const styles = StyleSheet.create({
     height: 24,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: colors.lineStrong,
+    borderColor: night.line,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
@@ -444,23 +458,24 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 5,
-    backgroundColor: colors.brass,
+    backgroundColor: night.candle,
   },
   stepCopy: {
     flex: 1,
   },
   stepText: {
-    color: colors.boneFaint,
+    color: night.textFaint,
     fontFamily: typography.sans,
     fontWeight: weight.medium,
     fontSize: 14,
     lineHeight: 19,
   },
   stepTextStrong: {
-    color: colors.bone,
+    color: night.text,
   },
   stepDetail: {
     ...textStyles.caption,
+    color: night.textFaint,
     marginTop: 2,
   },
   generatingAction: {

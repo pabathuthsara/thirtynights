@@ -3,7 +3,7 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlertTriangle, Check } from 'lucide-react-native';
 
-import { colors, motion, radii, shadows, textStyles, weight } from '@/theme';
+import { colors, motion, nativeAnimationDriver, radii, shadows, textStyles, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export type ToastMessage = { text: string; tone: 'success' | 'error' } | null;
@@ -26,7 +26,7 @@ export function Toast({ message, onDismiss, duration = 4200 }: {
 
     if (reducedMotion) slide.setValue(1);
     else {
-      Animated.spring(slide, { toValue: 1, damping: 22, stiffness: 250, mass: 0.8, useNativeDriver: true }).start();
+      Animated.spring(slide, { toValue: 1, damping: 22, stiffness: 250, mass: 0.8, useNativeDriver: nativeAnimationDriver }).start();
     }
 
     const timer = setTimeout(() => {
@@ -39,7 +39,7 @@ export function Toast({ message, onDismiss, duration = 4200 }: {
         toValue: 0,
         duration: motion.normal,
         easing: motion.easeSoft,
-        useNativeDriver: true,
+        useNativeDriver: nativeAnimationDriver,
       }).start(({ finished }) => finished && onDismiss());
     }, duration);
 

@@ -33,6 +33,11 @@ export const supabase = isSupabaseConfigured
 
 export const authRedirectUri = makeRedirectUri({ scheme: appIdentifiers.scheme, path: 'auth/callback' });
 
+// On web the provider returns into a popup that has to hand its result back to
+// the opener and close itself. Without this the browser preview hangs on a
+// blank tab after a successful Google sign-in. No-op on native.
+WebBrowser.maybeCompleteAuthSession();
+
 export async function ensureAnonymousSession() {
   if (!supabase) return { userId: null, state: 'local' as const };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -100,11 +105,39 @@ export async function handleAuthCallback(url: string) {
   return data.session?.user ?? null;
 }
 
+/**
+ * Raised when the provider itself has not been switched on in the Supabase
+ * project, as opposed to the user cancelling or the network failing.
+ *
+ * Apple has `isAvailableAsync()` to lean on; Google has nothing equivalent, so
+ * a project missing its Google credentials used to surface the raw string
+ * "Unsupported provider: provider is not enabled" straight into the UI. That
+ * reads as a broken app rather than an unfinished backend, and it is the single
+ * most likely state for this project to be in before launch.
+ */
+export class ProviderUnavailableError extends Error {
+  constructor(readonly provider: 'apple' | 'google') {
+    super(`The ${provider} provider is not enabled for this project.`);
+    this.name = 'ProviderUnavailableError';
+  }
+}
+
+/** Supabase reports a disabled provider as a validation failure on the message
+ *  rather than with a dedicated code, so the message is what we can match on. */
+function assertProviderEnabled(provider: 'apple' | 'google', error: { message?: string; code?: string } | null) {
+  if (!error) return;
+  const message = (error.message ?? '').toLowerCase();
+  if (message.includes('provider is not enabled') || message.includes('unsupported provider')) {
+    throw new ProviderUnavailableError(provider);
+  }
+}
+
 export async function linkOAuthIdentity(provider: 'apple' | 'google') {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
   const before = (await supabase.auth.getUser()).data.user;
   if (!before) throw new Error('The anonymous identity could not be restored.');
   const { data, error } = await supabase.auth.linkIdentity({ provider, options: { redirectTo: authRedirectUri, skipBrowserRedirect: true } });
+  assertProviderEnabled(provider, error);
   if (error) throw error;
   if (!data.url) throw new Error(`The ${provider} provider did not return an authorization URL.`);
   const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUri);
@@ -113,6 +146,25 @@ export async function linkOAuthIdentity(provider: 'apple' | 'google') {
   const after = (await supabase.auth.getUser()).data.user;
   if (!after || after.id !== before.id) throw new Error('Identity linking did not preserve the account. No data was moved.');
   return after;
+}
+
+/**
+ * Hand Apple's single-use authorization code to the backend, which trades it
+ * for a refresh token and keeps it until the account is deleted.
+ *
+ * Apple requires that deleting an account also revokes its tokens, and the code
+ * expires within minutes of sign-in — so this is the only moment it can be
+ * captured. It is intentionally non-fatal: nobody should be blocked from
+ * signing in because a server-to-server exchange failed. What it costs is that
+ * the account has no token to revoke later, which the launch checklist tracks.
+ */
+async function captureAppleAuthorizationCode(code: string | null) {
+  if (!supabase || !code) return;
+  try {
+    await supabase.functions.invoke('apple-identity', { body: { code } });
+  } catch {
+    // Swallowed by design — see above.
+  }
 }
 
 export async function linkNativeAppleIdentity() {
@@ -132,6 +184,7 @@ export async function linkNativeAppleIdentity() {
     if (credential.state !== state || !credential.identityToken) throw new Error('Apple did not return a verifiable identity token.');
     const { error } = await supabase.auth.linkIdentity({ provider: 'apple', token: credential.identityToken, nonce: rawNonce });
     if (error) throw error;
+    await captureAppleAuthorizationCode(credential.authorizationCode);
     const givenName = credential.fullName?.givenName;
     const familyName = credential.fullName?.familyName;
     if (givenName || familyName) {
@@ -159,6 +212,7 @@ export async function signInNativeAppleIdentity() {
     if (credential.state !== state || !credential.identityToken) throw new Error('Apple did not return a verifiable identity token.');
     const { data, error } = await supabase.auth.signInWithIdToken({ provider: 'apple', token: credential.identityToken, nonce: rawNonce });
     if (error) throw error;
+    await captureAppleAuthorizationCode(credential.authorizationCode);
     const givenName = credential.fullName?.givenName;
     const familyName = credential.fullName?.familyName;
     if (givenName || familyName) await supabase.auth.updateUser({ data: { full_name: [givenName, familyName].filter(Boolean).join(' '), given_name: givenName, family_name: familyName } });
@@ -172,6 +226,7 @@ export async function signInNativeAppleIdentity() {
 export async function signInWithOAuthProvider(provider: 'apple' | 'google') {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
   const { data, error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: authRedirectUri, skipBrowserRedirect: true } });
+  assertProviderEnabled(provider, error);
   if (error) throw error;
   if (!data.url) throw new Error(`The ${provider} provider did not return an authorization URL.`);
   const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUri);

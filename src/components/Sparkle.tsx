@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import Svg, { Defs, Path, RadialGradient, Stop, Circle } from 'react-native-svg';
+import Svg, { Defs, Mask, Path, RadialGradient, Stop, Circle } from 'react-native-svg';
 
-import { colors, motion } from '@/theme';
+import { colors, motion, nativeAnimationDriver } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 const AnimatedView = Animated.createAnimatedComponent(View);
@@ -29,8 +29,8 @@ export function Sparkle({ size = 14, color = colors.brass, style, twinkle = fals
     }
     const animation = Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.timing(pulse, { toValue: 1, duration: 1900, easing: motion.easeInOut, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0.25, duration: 2300, easing: motion.easeInOut, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1, duration: 1900, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
+      Animated.timing(pulse, { toValue: 0.25, duration: 2300, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
     ]));
     animation.start();
     return () => animation.stop();
@@ -59,6 +59,46 @@ export function Sparkle({ size = 14, color = colors.brass, style, twinkle = fals
         />
       </Svg>
     </AnimatedView>
+  );
+}
+
+/**
+ * Tonight's actual moon.
+ *
+ * The dark limb is *masked out* rather than painted over: the sky behind the
+ * moon is a gradient, so a shadow circle in any single colour showed up as a
+ * visible disc instead of disappearing. Masking leaves the unlit side truly
+ * transparent, and the crescent reads correctly wherever it sits.
+ */
+export function Moon({ size, phase, illumination, color }: {
+  size: number;
+  /** 0…1 through the synodic month; decides which limb is lit. */
+  phase: number;
+  /** 0 (new) … 1 (full). */
+  illumination: number;
+  color: string;
+}) {
+  const radius = 50;
+  const lit = Math.min(1, Math.max(0, illumination));
+  const offset = (1 - lit) * 2 * radius;
+  const waxing = phase < 0.5;
+  const maskId = `moon-${waxing ? 'wax' : 'wane'}-${Math.round(lit * 1000)}`;
+
+  return (
+    <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <Svg width={size} height={size} viewBox="0 0 100 100">
+        <Defs>
+          <Mask id={maskId}>
+            {/* White keeps, black cuts away. */}
+            <Circle cx={50} cy={50} r={radius} fill="#fff" />
+            {lit < 0.985 ? (
+              <Circle cx={50 + (waxing ? -offset : offset)} cy={50} r={radius} fill="#000" />
+            ) : null}
+          </Mask>
+        </Defs>
+        <Circle cx={50} cy={50} r={radius} fill={color} mask={`url(#${maskId})`} />
+      </Svg>
+    </View>
   );
 }
 

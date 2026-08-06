@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
-import { colors, HIT_TARGET, motion, shadows, typography, weight } from '@/theme';
+import { colors, HIT_TARGET, motion, nativeAnimationDriver, shadows, surfaces, typography, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 const tabs = [
@@ -29,7 +29,7 @@ export function SegmentedTabs({ value, onChange }: {
       damping: 20,
       stiffness: 220,
       mass: 0.7,
-      useNativeDriver: true,
+      useNativeDriver: nativeAnimationDriver,
     });
     animation.start();
     return () => animation.stop();
@@ -66,10 +66,10 @@ export function SegmentedTabs({ value, onChange }: {
             accessibilityLabel={tab.label}
             onPress={() => {
               if (active) return;
-              if (Platform.OS !== 'web') void Haptics.selectionAsync();
+              if (Platform.OS !== 'web') void Haptics.selectionAsync().catch(() => undefined);
               onChange(tab.id);
             }}
-            style={styles.tab}
+            style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
           >
             <Text style={[styles.label, active && styles.activeLabel]}>{tab.label}</Text>
           </Pressable>
@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
     padding: 5,
     marginBottom: 26,
     borderRadius: 999,
-    backgroundColor: 'rgba(250,242,236,0.9)',
+    backgroundColor: surfaces.paper,
     borderWidth: 1,
     borderColor: colors.line,
   },
@@ -106,6 +106,9 @@ const styles = StyleSheet.create({
     minHeight: HIT_TARGET,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  tabPressed: {
+    opacity: 0.62,
   },
   label: {
     color: colors.boneDim,

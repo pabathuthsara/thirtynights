@@ -6,7 +6,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Screen, Stagger } from '@/components/Screen';
 import { popupDefinitions, type PopupDefinition } from '@/data/popups';
-import { colors, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 
 export function PopupCatalogScreen({ onBack }: { onBack: () => void }) {
   const [selected, setSelected] = useState<PopupDefinition | null>(null);
@@ -71,7 +71,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.9)',
     borderRadius: radii.lg,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,253,249,0.86)',
+    backgroundColor: surfaces.card,
     ...shadows.soft,
     shadowOpacity: 0.07,
   },

@@ -33,12 +33,23 @@ function buildEnvironment() {
   return resolveAppEnvironment(requested);
 }
 
+/**
+ * v1 launches on the App Store only, so demanding a Play-side RevenueCat key
+ * would block the iOS build on a credential that does not exist yet. Require
+ * the key for the platform actually being built; EAS sets EAS_BUILD_PLATFORM,
+ * and a local production export (no platform set) is checked against iOS.
+ */
+function requiredStoreKeys() {
+  return process.env.EAS_BUILD_PLATFORM === 'android'
+    ? (['EXPO_PUBLIC_REVENUECAT_ANDROID_KEY'] as const)
+    : (['EXPO_PUBLIC_REVENUECAT_IOS_KEY'] as const);
+}
+
 function assertProductionConfiguration() {
   const required = [
     'EXPO_PUBLIC_SUPABASE_URL',
     'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
-    'EXPO_PUBLIC_REVENUECAT_IOS_KEY',
-    'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY',
+    ...requiredStoreKeys(),
     'EXPO_PUBLIC_NIGHTS_30_PRODUCT_ID',
     'EXPO_PUBLIC_NIGHTS_90_PRODUCT_ID',
     'EXPO_PUBLIC_PRIVACY_URL',
@@ -76,10 +87,19 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     icon: './assets/app/icon.png',
     backgroundColor: '#F8EFE7',
     ios: {
+      // v1 ships phone-only. The layouts have never had deliberate iPad QA, and
+      // declaring tablet support means App Review runs the whole thing on an
+      // iPad and rejects what it finds there.
       supportsTablet: false,
       usesAppleSignIn: true,
       bundleIdentifier: identifiers.bundleIdentifier,
-      infoPlist: { UIBackgroundModes: [] },
+      infoPlist: {
+        UIBackgroundModes: [],
+        // Declared up front so every TestFlight and App Store upload stops
+        // stalling on the export-compliance question. The app uses only the
+        // HTTPS/TLS exemption, so this is the correct answer.
+        ITSAppUsesNonExemptEncryption: false,
+      },
     },
     android: {
       package: identifiers.bundleIdentifier,
@@ -101,7 +121,15 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         backgroundColor: '#F8EFE7',
       }],
       ['expo-audio', { microphonePermission: 'Thirty Nights uses the microphone only while you hold the record button.' }],
-      ['expo-notifications', { sounds: [] }],
+      // Android draws the small icon as a mask: anything with real colour in it
+      // arrives as a grey blob. `notification-icon.png` is a white silhouette on
+      // transparent (see scripts/make_notification_icon.py), tinted at runtime
+      // with the app's brass.
+      ['expo-notifications', {
+        icon: './assets/app/notification-icon.png',
+        color: '#B88635',
+        sounds: [],
+      }],
       'expo-font',
       'expo-asset',
       'expo-secure-store',

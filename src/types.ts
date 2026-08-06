@@ -72,9 +72,14 @@ export type Report = {
 
 export type AuthState = 'local' | 'anonymous' | 'authenticated';
 
+/** What someone said they came for, during onboarding. Optional everywhere:
+ *  the answers only change what the app says back, never what it does. */
+export type IntentionId = 'remember' | 'hear' | 'someone' | 'habit' | 'unwind';
+
 export type AppSnapshot = {
   schemaVersion: 2;
   onboarded: boolean;
+  intentions?: IntentionId[];
   reminderHour: number;
   reminderMinute: number;
   timezone: string;
@@ -98,11 +103,14 @@ export type AppSnapshot = {
 
 export type RouteName =
   | 'onboarding'
+  | 'intentions'
   | 'time-picker'
   | 'notification-primer'
+  | 'plan'
   | 'home'
   | 'question'
   | 'sealing'
+  | 'reward'
   | 'generating'
   | 'report'
   | 'gallery'

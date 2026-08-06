@@ -1,5 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.111.0';
 
+import { revokeRefreshToken } from '../_shared/apple.ts';
+
 async function objectPaths(client: ReturnType<typeof createClient>, bucket: string, userId: string) {
   const paths: string[] = [];
   const { data: roots, error: rootError } = await client.storage.from(bucket).list(userId, { limit: 1000 });
@@ -38,6 +40,14 @@ Deno.serve(async (request) => {
   if (deletionError) return Response.json({ error: 'deletion_audit_failed' }, { status: 500 });
 
   try {
+    // Apple first. Guideline 5.1.1(v) requires that deleting an account revokes
+    // the tokens Apple issued, and once `auth.admin.deleteUser` runs the
+    // identity row is gone — so a failure here has to stop the deletion while
+    // it is still retryable, not leave an unrevocable orphan behind.
+    const { data: appleToken, error: appleTokenError } = await service.rpc('get_apple_refresh_token', { target_user: userId });
+    if (appleTokenError) throw appleTokenError;
+    if (appleToken) await revokeRefreshToken(appleToken as string);
+
     const revenueCatKey = Deno.env.get('REVENUECAT_SECRET_API_KEY');
     if (!revenueCatKey) throw new Error('revenuecat_delete_not_configured');
     const revenueCatResponse = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`, {

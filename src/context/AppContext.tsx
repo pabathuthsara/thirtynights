@@ -8,7 +8,7 @@ import { defaultSnapshot, makeChapter } from '@/lib/snapshot';
 import { clearLocalCloudSession, ensureAnonymousSession, requestRemoteDeletion, subscribeToAuthLinks } from '@/lib/supabase';
 import { deleteAllRecordings } from '@/services/audioFiles';
 import { synchronize } from '@/services/sync';
-import type { AppSnapshot, Night } from '@/types';
+import type { AppSnapshot, IntentionId, Night, Report, ReportEvidence } from '@/types';
 
 type DemoMode = 'empty' | 'partial' | 'complete';
 
@@ -19,6 +19,7 @@ type AppContextValue = {
   currentNight: Night;
   recordedCount: number;
   updateReminder: (hour: number, minute: number) => void;
+  setIntentions: (intentions: IntentionId[]) => void;
   finishOnboarding: (notificationsEnabled: boolean) => void;
   sealCurrentNight: (durationSec: number, localUri?: string) => Promise<boolean>;
   setAuthDetails: (email?: string, displayName?: string, ownerId?: string) => void;
@@ -32,6 +33,42 @@ type AppContextValue = {
 };
 
 const Context = createContext<AppContextValue | null>(null);
+
+/** A finished reflection for the `complete` developer preview. The quotes are
+ *  obviously sample text, never claims about a real recording, and this only
+ *  ever runs behind the `__DEV__` guard in `loadDemo`. */
+function demoReport(chapter: AppSnapshot['currentChapter']): Report {
+  const nightAt = (index: number) => chapter.nights[index - 1];
+  const evidence = (index: number, startMs: number, quote: string): ReportEvidence[] => {
+    const night = nightAt(index);
+    if (!night) return [];
+    return [{ nightId: night.id, nightIndex: night.index, segmentId: `demo-${index}`, startMs, endMs: startMs + 9_000, quote }];
+  };
+
+  return {
+    id: `demo-report-${chapter.id}`,
+    chapterId: chapter.id,
+    checkpointNight: 30,
+    status: 'ready',
+    reportVersion: 'demo',
+    generatedAt: new Date().toISOString(),
+    summary: 'You spent the month telling yourself the truth in smaller and smaller sentences.',
+    sections: [
+      {
+        title: 'You kept apologising for resting.',
+        eyebrow: 'What kept returning',
+        body: 'Eleven of these nights mention being tired, and eight of those follow the word "still" — still had to, still should have. The tiredness is not the pattern. The bargaining afterwards is.',
+        evidence: evidence(4, 26_000, 'I got through it, which I suppose is the main thing.'),
+      },
+      {
+        title: 'The evenings you liked were the unplanned ones.',
+        eyebrow: 'What changed',
+        body: 'Every night you describe as good arrived without being scheduled. The planned ones get reported; the unplanned ones get described.',
+        evidence: evidence(19, 41_000, 'Nothing happened, really. It was just easy for once.'),
+      },
+    ],
+  };
+}
 
 function nextCurrentNight(snapshot: AppSnapshot) {
   const nights = snapshot.currentChapter.nights;
@@ -86,12 +123,12 @@ export function AppProvider({ children }: PropsWithChildren) {
 
     const removeLinkListener = subscribeToAuthLinks((ownerId, email) => {
       setSnapshot((current) => ({ ...current, ownerId, email, authState: 'authenticated' }));
-      void runSync();
+      void runSync().catch(() => undefined);
     });
     const appState = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         setSnapshot((current) => reconcileSnapshot(current));
-        void runSync();
+        void runSync().catch(() => undefined);
       }
     });
     return () => {
@@ -103,11 +140,14 @@ export function AppProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     if (!ready) return;
-    void saveLocalState(snapshot);
+    // Persistence happens after every meaningful state transition. Handle the
+    // rejection here so a recoverable device-storage problem never becomes an
+    // uncaught development overlay on top of the product UI.
+    void saveLocalState(snapshot).catch(() => undefined);
   }, [ready, snapshot]);
 
   useEffect(() => {
-    if (ready && snapshot.onboarded) void runSync();
+    if (ready && snapshot.onboarded) void runSync().catch(() => undefined);
   }, [ready, snapshot.onboarded, snapshot.authState, snapshot.backupNetwork, runSync]);
 
   const update = useCallback((recipe: (current: AppSnapshot) => AppSnapshot) => {
@@ -126,7 +166,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
       timer = setTimeout(() => {
         update((current) => reconcileSnapshot(current));
-        void runSync();
+        void runSync().catch(() => undefined);
         scheduleMidnightReconciliation();
       }, next.getTime() - now.getTime());
     };
@@ -139,7 +179,7 @@ export function AppProvider({ children }: PropsWithChildren) {
     const next = await sealNightLocally(latest.current, { durationSec, temporaryUri: localUri });
     latest.current = next;
     setSnapshot(next);
-    void runSync();
+    void runSync().catch(() => undefined);
     return [7, 30, 60, 90].includes(sealedIndex);
   }, [runSync]);
 
@@ -166,7 +206,12 @@ export function AppProvider({ children }: PropsWithChildren) {
       if (night.index === count + 1) return { ...night, status: 'today' as const };
       return { ...night, status: 'future' as const };
     });
-    update((current) => ({ ...current, onboarded: true, accessTier: 'paid30', currentChapter: chapter, demoMode: mode }));
+    // A finished chapter also needs a finished reflection, otherwise the report
+    // screen's real state — sections, quotes, the wax dots that play a night
+    // back — is unreachable in a preview and can never be checked.
+    const reports = mode === 'complete' ? [demoReport(chapter)] : [];
+
+    update((current) => ({ ...current, onboarded: true, accessTier: 'paid30', currentChapter: chapter, reports, demoMode: mode }));
   }, [update]);
 
   const resetEverything = useCallback(async (remote = false) => {
@@ -193,6 +238,7 @@ export function AppProvider({ children }: PropsWithChildren) {
     currentNight,
     recordedCount,
     updateReminder: (hour, minute) => update((current) => ({ ...current, reminderHour: hour, reminderMinute: minute })),
+    setIntentions: (intentions) => update((current) => ({ ...current, intentions })),
     finishOnboarding: (notificationsEnabled) => update((current) => ({ ...current, onboarded: true, notificationsEnabled })),
     sealCurrentNight,
     setAuthDetails: (email, displayName, ownerId) => update((current) => ({ ...current, authState: 'authenticated', email, displayName, ownerId: ownerId ?? current.ownerId })),

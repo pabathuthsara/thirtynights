@@ -10,18 +10,19 @@ import {
   isSupabaseConfigured,
   linkNativeAppleIdentity,
   linkOAuthIdentity,
+  ProviderUnavailableError,
   requestEmailUpgrade,
   sendEmailSignInLink,
   signInNativeAppleIdentity,
   signInWithOAuthProvider,
 } from '@/lib/supabase';
-import { colors, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 
 export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnavailable }: {
   hasLocalRecordings: boolean;
   onBack: () => void;
   onAuthenticated: (email?: string, ownerId?: string) => void;
-  onUnavailable: (provider: 'Apple Sign-In' | 'Google Sign-In' | 'Email authentication') => void;
+  onUnavailable: (provider: 'Apple Sign-In' | 'Email authentication') => void;
 }) {
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
   const [email, setEmail] = useState('');
@@ -66,22 +67,32 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
     }
   };
 
-  const linkProvider = async (provider: 'apple' | 'google') => {
+  // v1 ships iOS-only with Apple as the single provider. Google's browser-based
+  // flow still exists in `lib/supabase` and can be re-surfaced here when the
+  // Android release needs it; it is only the button that is gone.
+  const continueWithApple = async () => {
     if (loading) return;
     setError('');
     if (!isSupabaseConfigured) {
-      onUnavailable(provider === 'apple' ? 'Apple Sign-In' : 'Google Sign-In');
+      onUnavailable('Apple Sign-In');
       return;
     }
     try {
       setLoading(true);
       if (mode === 'signin' && hasLocalRecordings) throw new Error('Provider recovery is stopped while this device owns unmerged recordings.');
-      const user = provider === 'apple' && Platform.OS === 'ios'
+      const user = Platform.OS === 'ios'
         ? mode === 'signin' ? await signInNativeAppleIdentity() : await linkNativeAppleIdentity()
-        : mode === 'signin' ? await signInWithOAuthProvider(provider) : await linkOAuthIdentity(provider);
+        : mode === 'signin' ? await signInWithOAuthProvider('apple') : await linkOAuthIdentity('apple');
       if (user) onAuthenticated(user.email, user.id);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : `Couldn't connect ${provider}.`);
+      // A provider that was never switched on in the backend is an owner-setup
+      // problem, not something the person holding the phone can fix by trying
+      // again. Route it to the same explanation the rest of the app uses.
+      if (caught instanceof ProviderUnavailableError) {
+        onUnavailable('Apple Sign-In');
+        return;
+      }
+      setError(caught instanceof Error ? caught.message : "Couldn't connect Apple.");
     } finally {
       setLoading(false);
     }
@@ -104,15 +115,14 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
               buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
               cornerRadius={radii.lg}
               style={styles.appleButton}
-              onPress={() => void linkProvider('apple')}
+              onPress={() => void continueWithApple()}
             />
           </View>
         ) : (
-          <Button icon={Apple} variant="paper" disabled={loading} onPress={() => void linkProvider('apple')}>
+          <Button icon={Apple} variant="paper" disabled={loading} onPress={() => void continueWithApple()}>
             Continue with Apple
           </Button>
         )}
-        <Button variant="paper" disabled={loading} onPress={() => void linkProvider('google')}>Continue with Google</Button>
 
         <View style={styles.orRow}>
           <View style={styles.line} />
@@ -184,7 +194,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.92)',
-    backgroundColor: 'rgba(255,253,249,0.88)',
+    backgroundColor: surfaces.card,
     ...shadows.floating,
     shadowOpacity: 0.1,
   },
@@ -226,7 +236,7 @@ const styles = StyleSheet.create({
     marginTop: 28,
     padding: 16,
     borderRadius: radii.md,
-    backgroundColor: 'rgba(240,246,241,0.7)',
+    backgroundColor: surfaces.success,
     borderWidth: 1,
     borderColor: 'rgba(90,116,98,0.2)',
   },

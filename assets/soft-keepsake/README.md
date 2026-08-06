@@ -2,6 +2,37 @@
 
 These production assets were generated from `mockup.png` with OpenAI's built-in high-quality image generator, then prepared as local Expo assets. Higgsfield was not used because the connected plugin did not expose a callable tool in this workspace.
 
+## Earned stamp set v3
+
+The 30 earned stamps were redesigned as individual high-resolution renders, then
+background-cleaned and normalized to transparent 256x256 PNGs. Every stamp uses
+the same 188-pixel longest-edge footprint as the original crescent moon, while
+the primary motif is unique for every night:
+
+1. crescent moon; 2. north-star compass; 3. luna moth; 4. antique key;
+5. rose window; 6. raincloud; 7. sealed letter; 8. sunrise; 9. olive branch;
+10. hourglass; 11. shooting star; 12. cherry blossom; 13. teacup; 14. pearl shell;
+15. glowing window; 16. butterfly; 17. open journal; 18. lantern; 19. feather quill;
+20. songbird; 21. jeweled compact mirror; 22. mushroom cluster; 23. swan; 24. telescope;
+25. strawberry; 26. sleeping fox; 27. celestial harp; 28. perfume bottle;
+29. firefly jar; 30. celestial crown.
+
+`source-masters/completed-sticker-set-v3-proof.jpg` is the final 6-by-5 QA proof.
+`scripts/prepare_individual_stamps.py` reproduces the consistent crop, scale,
+padding, and preview sheet from transparent high-resolution sources.
+
+### V3 generation prompt system
+
+Each motif was generated separately with the existing crescent moon as a style
+reference. The shared prompt required a premium miniature 3D paper-and-enamel
+scrapbook ornament; convincing relief; rounded bevels; dimensional jewel color;
+antique-gold rims and foil; cotton-paper fibers; warm diffuse studio light;
+internal ambient occlusion; one centered complete silhouette; no text, numbers,
+watermark, duplicate objects, or flat vector treatment. Motif-specific prompts
+defined the subject, silhouette, and a distinct palette. Sources were generated
+on solid chroma green, cleaned with the installed image-generation alpha helper,
+then normalized with a 188-pixel longest edge on a 256x256 transparent canvas.
+
 ## Runtime assets
 
 - `stickers/completed/`: 30 illustrated transparent PNG stickers, numbered `01`–`30`.

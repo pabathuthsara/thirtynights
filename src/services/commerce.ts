@@ -16,7 +16,8 @@ const PRODUCT_IDS: Record<ProductPlan, string> = {
   paid90: process.env.EXPO_PUBLIC_NIGHTS_90_PRODUCT_ID || 'com.thirtynights.nights90',
 };
 
-let configuredFor: string | null = null;
+let configured = false;
+let identifiedAs: string | null = null;
 
 function apiKey() {
   if (Platform.OS === 'ios') return process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY;
@@ -29,18 +30,39 @@ export function isCommerceConfigured() {
   return Boolean(key && !key.includes('replace_me') && Platform.OS !== 'web');
 }
 
-export async function configureCommerce(userId: string) {
+/**
+ * Bring the store up, with an owner if we have one and anonymously if we do not.
+ *
+ * Reading prices must never require an account. It used to: the paywall only
+ * fetched products once `authState === 'authenticated'`, so the first person to
+ * ever open it saw two tiers labelled "Account required" and no price at all.
+ * That is a conversion hole and a review risk in one — both stores expect the
+ * real, localized, store-matched price to be legible on the screen that asks
+ * for money. RevenueCat is happy to run under an anonymous app user ID and to
+ * be handed the real one later via `logIn`, which is what this does.
+ */
+async function ensureConfigured(userId?: string) {
   if (!isCommerceConfigured()) return false;
-  if (configuredFor === userId) return true;
-  Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
-  if (!configuredFor) Purchases.configure({ apiKey: apiKey()!, appUserID: userId });
-  else await Purchases.logIn(userId);
-  configuredFor = userId;
+  if (!configured) {
+    Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
+    Purchases.configure(userId ? { apiKey: apiKey()!, appUserID: userId } : { apiKey: apiKey()! });
+    configured = true;
+    identifiedAs = userId ?? null;
+    return true;
+  }
+  if (userId && identifiedAs !== userId) {
+    await Purchases.logIn(userId);
+    identifiedAs = userId;
+  }
   return true;
 }
 
-export async function loadCommerceProducts(userId: string) {
-  if (!await configureCommerce(userId)) return [];
+export async function configureCommerce(userId: string) {
+  return ensureConfigured(userId);
+}
+
+export async function loadCommerceProducts(userId?: string) {
+  if (!await ensureConfigured(userId)) return [];
   const products = await Purchases.getProducts(Object.values(PRODUCT_IDS), PRODUCT_CATEGORY.NON_SUBSCRIPTION);
   return products.flatMap((product): CommerceProduct[] => {
     const plan = (Object.entries(PRODUCT_IDS).find(([, id]) => id === product.identifier)?.[0]) as ProductPlan | undefined;

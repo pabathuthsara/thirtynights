@@ -67,6 +67,14 @@ These items require the legal/billing/account owner or physical-device access. D
 - Publish and provide HTTPS privacy, terms, support, and web account-deletion pages. Configure their public URLs in EAS; the app deliberately refuses fake fallback legal pages.
 - Apple-linked deletion still needs an approved token-revocation design/configuration and physical validation against the owner’s Apple credentials before launch.
 
+## Launch checklist
+
+v1 ships to the Apple App Store only. `docs/APP_STORE_LAUNCH.md` is the ordered,
+owner-facing list of everything still required to submit. Start there rather
+than from this document's "Owner or human intervention" section, which it
+supersedes. `docs/PRODUCTION_CHECKLIST.md` retains the Play-store steps for the
+later Android release.
+
 ## Verification log
 
 - 2026-08-03: root TypeScript passed after route/service integration.
@@ -78,6 +86,16 @@ These items require the legal/billing/account owner or physical-device access. D
 - 2026-08-03: dependency audit found zero high/critical issues and zero worker issues. Eleven moderate findings remain in Expo build-tooling dependencies through `xcode`/`uuid`; npm's proposed automatic remedy is an unsafe Expo SDK downgrade and was not applied.
 - 2026-08-03: every forward migration executed successfully under `ON_ERROR_STOP` in a disposable PostgreSQL database with minimal Supabase Auth/Storage stubs; the temporary database and roles were removed afterward. This validates SQL/PLpgSQL execution but not hosted Supabase policy behavior.
 - Pending: migration/RLS/Storage/RPC execution because Docker/Podman is not installed or running on this machine; generated database type diff; physical-device/store/provider testing.
+- 2026-08-06: scoped v1 to the App Store only. Removed the Google Sign-In button
+  (the provider code in `lib/supabase` is untouched and still exported), made the
+  production config require only the RevenueCat key for the platform being built,
+  and implemented Sign in with Apple token revocation for account deletion —
+  `_shared/apple.ts`, the `apple-identity` function, `private.apple_identities`
+  with two service-role-only RPCs, and a revoke-before-delete step in
+  `delete-account`. The revocation path has not been exercised against Apple; it
+  cannot be until the Team ID, Key ID and `.p8` exist as function secrets.
+  Root TypeScript and 31 tests pass.
+- 2026-08-06: production-readiness audit. Removed the CNG conflict (native folders gitignored), untracked `.env`, declared export compliance, set the app phone-only, generated a real Android notification mask, added a typed unavailable-provider path for OAuth, gave the worker upstream deadlines and a `/healthz` probe, and lifted the store-price gate that required an account. Expo Doctor now passes 20/20 (was 18/20); root TypeScript, worker TypeScript, 31 tests and the browser production export all pass.
 
 ## Security handoff rule
 

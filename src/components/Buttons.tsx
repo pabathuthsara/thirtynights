@@ -1,10 +1,10 @@
-import { useRef, type PropsWithChildren, type ReactNode } from 'react';
+import { useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
 import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import type { LucideIcon } from 'lucide-react-native';
 
-import { colors, gradients, HIT_TARGET, motion, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, gradients, HIT_TARGET, motion, nativeAnimationDriver, night as nightTheme, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 type Variant = 'bone' | 'outline' | 'ghost' | 'ember' | 'paper';
@@ -36,7 +36,7 @@ function usePressAnimation(enabled: boolean) {
       damping: 18,
       stiffness: 380,
       mass: 0.55,
-      useNativeDriver: true,
+      useNativeDriver: nativeAnimationDriver,
     }).start();
   };
 
@@ -58,12 +58,14 @@ export function Button({
   const inactive = Boolean(disabled || loading);
   const foreground = filled(variant) ? colors.white : colors.bone;
   const animation = usePressAnimation(!inactive);
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
 
   const handlePress = () => {
     if (haptic && Platform.OS !== 'web') {
       void Haptics.impactAsync(
         variant === 'ember' ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light,
-      );
+      ).catch(() => undefined);
     }
     onPress?.();
   };
@@ -78,8 +80,18 @@ export function Button({
         onPress={handlePress}
         onPressIn={animation.onPressIn}
         onPressOut={animation.onPressOut}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
         android_ripple={filled(variant) ? { color: 'rgba(255,255,255,0.20)' } : { color: 'rgba(190,111,124,0.16)' }}
-        style={[styles.button, styles[variant], inactive && styles.disabled]}
+        style={[
+          styles.button,
+          styles[variant],
+          hovered && !inactive && (filled(variant) ? styles.hoveredFilled : styles.hovered),
+          focused && styles.focused,
+          inactive && styles.disabled,
+        ]}
       >
         {filled(variant) ? (
           <LinearGradient
@@ -116,43 +128,54 @@ export function TextButton({ children, onPress, color = colors.roseText, accessi
   color?: string;
   accessibilityLabel?: string;
 }>) {
+  const [focused, setFocused] = useState(false);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? (typeof children === 'string' ? children : undefined)}
       onPress={onPress}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       hitSlop={16}
-      style={({ pressed }) => [styles.textButton, pressed && styles.textPressed]}
+      style={({ pressed }) => [styles.textButton, focused && styles.textFocused, pressed && styles.textPressed]}
     >
       <Text style={[styles.textButtonLabel, { color }]}>{children}</Text>
     </Pressable>
   );
 }
 
-export function IconButton({ icon: Icon, onPress, paper = false, label, badge = false }: {
+export function IconButton({ icon: Icon, onPress, paper = false, night = false, label, badge = false }: {
   icon: LucideIcon;
   onPress?: () => void;
   paper?: boolean;
+  /** Rendered over the nightfall atmosphere: translucent plum, light glyph. */
+  night?: boolean;
   label: string;
   badge?: boolean;
 }) {
   const animation = usePressAnimation(true);
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
   return (
     <Animated.View style={animation.style}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
         onPress={() => {
-          if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
           onPress?.();
         }}
         onPressIn={animation.onPressIn}
         onPressOut={animation.onPressOut}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
         hitSlop={10}
         android_ripple={{ color: 'rgba(190,111,124,0.18)', borderless: true, radius: 26 }}
-        style={styles.iconButton}
+        style={[styles.iconButton, night && styles.iconNight, hovered && styles.iconHovered, focused && styles.iconFocused]}
       >
-        <Icon size={21} strokeWidth={1.8} color={paper ? colors.paperInk : colors.bone} />
+        <Icon size={21} strokeWidth={1.8} color={night ? nightTheme.text : paper ? colors.paperInk : colors.bone} />
         {badge ? <View style={styles.badge} /> : null}
       </Pressable>
     </Animated.View>
@@ -166,7 +189,7 @@ const styles = StyleSheet.create({
   button: {
     width: '100%',
     minHeight: 56,
-    borderRadius: radii.lg,
+    borderRadius: radii.md,
     borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -194,13 +217,11 @@ const styles = StyleSheet.create({
     ...shadows.soft,
   },
   outline: {
-    backgroundColor: 'rgba(255,253,249,0.70)',
+    backgroundColor: surfaces.card,
     borderColor: colors.lineStrong,
-    ...shadows.soft,
-    shadowOpacity: 0.07,
   },
   ghost: {
-    backgroundColor: 'rgba(255,253,249,0.42)',
+    backgroundColor: surfaces.cardSoft,
     borderColor: colors.line,
   },
   ember: {
@@ -213,6 +234,18 @@ const styles = StyleSheet.create({
     opacity: 0.55,
     shadowOpacity: 0,
     elevation: 0,
+  },
+  hovered: {
+    borderColor: 'rgba(175,79,95,0.48)',
+    backgroundColor: colors.white,
+  },
+  hoveredFilled: {
+    opacity: 0.92,
+    borderColor: 'rgba(255,255,255,0.46)',
+  },
+  focused: {
+    borderColor: colors.brass,
+    borderWidth: 2,
   },
   label: {
     flex: 1,
@@ -235,6 +268,10 @@ const styles = StyleSheet.create({
   textPressed: {
     opacity: 0.6,
   },
+  textFocused: {
+    borderRadius: radii.sm,
+    backgroundColor: 'rgba(228,194,122,0.18)',
+  },
   textButtonLabel: {
     ...textStyles.label,
     fontSize: 14,
@@ -248,11 +285,25 @@ const styles = StyleSheet.create({
     borderRadius: HIT_TARGET / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,253,249,0.86)',
+    backgroundColor: surfaces.card,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.92)',
     ...shadows.soft,
     shadowOpacity: 0.10,
+  },
+  iconNight: {
+    backgroundColor: nightTheme.surface,
+    borderColor: nightTheme.line,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  iconHovered: {
+    backgroundColor: colors.white,
+    borderColor: 'rgba(175,79,95,0.32)',
+  },
+  iconFocused: {
+    borderColor: colors.brass,
+    borderWidth: 2,
   },
   badge: {
     position: 'absolute',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, AppState, Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle } from 'react-native-svg';
 import {
   AudioModule,
@@ -17,9 +18,10 @@ import { Button } from '@/components/Buttons';
 import { Screen, Stagger } from '@/components/Screen';
 import { Glow, Sparkle } from '@/components/Sparkle';
 import { Waveform } from '@/components/Waveform';
-import { colors, motion, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { formatLongDate } from '@/domain/format';
+import { colors, motion, nativeAnimationDriver, night, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
-import { completedStickerAssets, stickerAssetForNight } from '@/data/keepsakeAssets';
+import { keepsakeDecorations, mysteryEmboss } from '@/data/keepsakeAssets';
 
 const MIN_SECONDS = 10;
 const SUGGESTED_SECONDS = 90;
@@ -29,6 +31,24 @@ const RING = BUTTON + 22;
 const LEVEL_HISTORY = 52;
 /** Below this, a press counts as a tap and latches recording on. */
 const TAP_MS = 400;
+
+/** An overlay wider than the button cannot be centred with flexbox: Yoga clamps
+ *  main-axis overflow, so a taller-than-parent child is pinned to the top of the
+ *  stage instead of overhanging both ends — which drew the cap ring a full 11px
+ *  below the button. Placing these boxes by offset keeps them truly concentric. */
+function concentric(size: number) {
+  return {
+    position: 'absolute' as const,
+    top: (BUTTON - size) / 2,
+    left: (BUTTON - size) / 2,
+    width: size,
+    height: size,
+  };
+}
+const RING_LAYER = concentric(RING);
+const GLOW_REST_LAYER = concentric(RING * 1.7);
+const GLOW_AURA_LAYER = concentric(RING * 2);
+const GLOW_VOICE_LAYER = concentric(RING * 2.2);
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -55,7 +75,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
   });
   const recorderState = useAudioRecorderState(recorder, 100);
 
-  const [phase, setPhase] = useState<'question' | 'ready'>('question');
+  const [phase, setPhase] = useState<'letter' | 'question' | 'ready'>('letter');
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [sheet, setSheet] = useState<'primer' | 'denied' | 'short' | 'leave' | 'error' | null>(null);
   const [error, setError] = useState('');
@@ -68,12 +88,20 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
 
   const startTime = useRef(0);
   const pressStart = useRef(0);
+  const pressBeganWhileRecording = useRef(false);
+  const starting = useRef<Promise<boolean> | null>(null);
+  const recordingRef = useRef(false);
   const finishing = useRef(false);
   const aura = useRef(new Animated.Value(0)).current;
+  /** Follows the live meter, so the halo answers the voice, not a timer. */
+  const voice = useRef(new Animated.Value(0)).current;
+  const crack = useRef(new Animated.Value(0)).current;
+  const cracking = useRef(false);
   const reducedMotion = useReducedMotion();
   const finishRef = useRef<(hitCap?: boolean) => Promise<void>>(async () => undefined);
 
   const recording = recorderState.isRecording;
+  recordingRef.current = recording;
 
   // A smooth, monotonic clock. Rounding a 100ms poll made the timer visibly
   // stutter and occasionally repeat or skip a second.
@@ -94,6 +122,22 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
     });
   }, [recording, recorderState.metering, recorderState.durationMillis]);
 
+  // The halo answers the voice. Each meter sample nudges a spring, so speaking
+  // visibly blooms the light around the button and silence lets it settle.
+  useEffect(() => {
+    if (!recording) {
+      voice.setValue(0);
+      return;
+    }
+    Animated.spring(voice, {
+      toValue: meteringToLevel(recorderState.metering),
+      damping: 20,
+      stiffness: 260,
+      mass: 0.6,
+      useNativeDriver: nativeAnimationDriver,
+    }).start();
+  }, [recording, recorderState.metering, voice]);
+
   // Breathing aura behind the button (§11.2 "Recording state").
   useEffect(() => {
     if (!recording || reducedMotion) {
@@ -102,8 +146,8 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       return;
     }
     const animation = Animated.loop(Animated.sequence([
-      Animated.timing(aura, { toValue: 1, duration: 1700, easing: motion.easeInOut, useNativeDriver: true }),
-      Animated.timing(aura, { toValue: 0, duration: 1700, easing: motion.easeInOut, useNativeDriver: true }),
+      Animated.timing(aura, { toValue: 1, duration: 1700, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
+      Animated.timing(aura, { toValue: 0, duration: 1700, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
     ]));
     animation.start();
     return () => animation.stop();
@@ -122,12 +166,13 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
   }, [onSeal]);
 
   const finishRecording = useCallback(async (hitCap = false) => {
-    if (!recorderState.isRecording || finishing.current) return;
+    if (!recordingRef.current || finishing.current) return;
     finishing.current = true;
     setLatched(false);
     const wallClock = Math.max(1, Math.round((Date.now() - startTime.current) / 1000));
     try {
       await recorder.stop();
+      recordingRef.current = false;
       const duration = hitCap ? MAX_SECONDS : Math.max(wallClock, Math.round(recorderState.durationMillis / 1000));
       const uri = recorder.uri ?? recorderState.url ?? undefined;
       setFinalDuration(duration);
@@ -143,7 +188,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       setError(caught instanceof Error ? caught.message : 'The recorder could not close safely. Tonight remains open.');
       setSheet('error');
     }
-  }, [recorder, recorderState.durationMillis, recorderState.isRecording, recorderState.url, seal]);
+  }, [recorder, recorderState.durationMillis, recorderState.url, seal]);
 
   finishRef.current = finishRecording;
 
@@ -157,7 +202,9 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state !== 'active' && recorderState.isRecording) void finishRef.current();
       if (state === 'active') {
-        void AudioModule.getRecordingPermissionsAsync().then((permission) => setPermissionGranted(permission.granted));
+        void AudioModule.getRecordingPermissionsAsync()
+          .then((permission) => setPermissionGranted(permission.granted))
+          .catch(() => undefined);
       }
     });
     return () => subscription.remove();
@@ -165,18 +212,23 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
 
   const requestMic = async () => {
     setSheet(null);
-    const result = await AudioModule.requestRecordingPermissionsAsync();
-    if (!result.granted) {
-      setSheet('denied');
-      return;
+    try {
+      const result = await AudioModule.requestRecordingPermissionsAsync();
+      if (!result.granted) {
+        setSheet('denied');
+        return;
+      }
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
+      setPermissionGranted(true);
+      setPhase('ready');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Microphone access could not be prepared.');
+      setSheet('error');
     }
-    await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
-    setPermissionGranted(true);
-    setPhase('ready');
   };
 
-  const startRecording = async () => {
-    if (!permissionGranted || recorderState.isRecording || sealing) return;
+  const startRecording = async (): Promise<boolean> => {
+    if (!permissionGranted || recordingRef.current || sealing) return false;
     try {
       finishing.current = false;
       setFinalDuration(0);
@@ -185,11 +237,15 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       setElapsed(0);
       await recorder.prepareToRecordAsync();
       recorder.record();
+      recordingRef.current = true;
       startTime.current = Date.now();
-      if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => undefined);
+      return true;
     } catch (caught) {
+      recordingRef.current = false;
       setError(caught instanceof Error ? caught.message : 'The recorder could not start. Check available storage and audio devices.');
       setSheet('error');
+      return false;
     }
   };
 
@@ -206,23 +262,30 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
   // that can only be reached by physically holding a button is not usable.
   const handlePressIn = () => {
     pressStart.current = Date.now();
-    if (recording && latched) return;
-    if (!recording) void startRecording();
+    pressBeganWhileRecording.current = recordingRef.current;
+    if (recordingRef.current) return;
+    const pending = startRecording();
+    starting.current = pending;
   };
 
   const handlePressOut = () => {
     const held = Date.now() - pressStart.current;
-    if (recording && latched) {
+    if (pressBeganWhileRecording.current) {
       void finishRecording();
       return;
     }
-    if (!recording) return;
-    if (held < TAP_MS) {
-      setLatched(true);
-      if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      return;
-    }
-    void finishRecording();
+    const pending = starting.current;
+    if (!pending) return;
+    void pending.then(async (started) => {
+      if (starting.current === pending) starting.current = null;
+      if (!started) return;
+      if (held < TAP_MS) {
+        setLatched(true);
+        if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+        return;
+      }
+      await finishRef.current();
+    }).catch(() => undefined);
   };
 
   const handleBack = () => {
@@ -230,21 +293,110 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
     else onBack();
   };
 
+  /** Break the seal: a press, a wobble, a flash, and the letter is open. */
+  const breakSeal = () => {
+    if (cracking.current) return;
+    cracking.current = true;
+    if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    if (reducedMotion) {
+      setPhase('question');
+      return;
+    }
+    Animated.timing(crack, {
+      toValue: 1,
+      duration: 680,
+      easing: motion.easeGentle,
+      useNativeDriver: nativeAnimationDriver,
+    }).start(({ finished }) => {
+      if (finished) setPhase('question');
+      cracking.current = false;
+    });
+  };
+
+  if (phase === 'letter') {
+    return (
+      <Screen scroll={false} variant="night" contentStyle={styles.screen}>
+        <Stagger index={0}>
+          <AppHeader night label={`NIGHT ${nightIndex}`} onBack={onBack} />
+        </Stagger>
+        <Stagger index={1} style={styles.letterStage}>
+          <Animated.View
+            style={{
+              opacity: crack.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 1, 0] }),
+              transform: [
+                { scale: crack.interpolate({ inputRange: [0, 0.35, 1], outputRange: [1, 1.04, 1.12] }) },
+              ],
+            }}
+          >
+            <View style={styles.letterEnvelope}>
+              <LinearGradient colors={['#FFFCF7', '#F6E7DF']} style={StyleSheet.absoluteFill} />
+              <View style={styles.letterFlap}>
+                <LinearGradient colors={['#F9EDE6', '#EFD9D1']} style={StyleSheet.absoluteFill} />
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Break the seal and read tonight's question"
+                onPress={breakSeal}
+                hitSlop={18}
+                style={({ pressed }) => [styles.letterSealWrap, pressed && styles.letterSealPressed]}
+              >
+                <Glow size={150} color={night.candle} opacity={0.5} style={styles.letterSealGlow} />
+                <Animated.View
+                  style={{
+                    transform: [
+                      { rotate: crack.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: ['0deg', '-7deg', '6deg', '-3deg', '0deg'] }) },
+                      { scale: crack.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.1, 1.3] }) },
+                    ],
+                  }}
+                >
+                  <Image source={keepsakeDecorations.waxSeal} resizeMode="contain" style={styles.letterSealArt} />
+                </Animated.View>
+              </Pressable>
+              {/* The flash as the wax gives way. */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  styles.letterFlash,
+                  { opacity: crack.interpolate({ inputRange: [0, 0.5, 0.7, 1], outputRange: [0, 0, 0.55, 0] }) },
+                ]}
+              />
+            </View>
+          </Animated.View>
+          <Sparkle size={13} color={night.candle} twinkle style={styles.letterSparkleOne} />
+          <Sparkle size={9} color={night.candle} twinkle delay={1400} style={styles.letterSparkleTwo} />
+        </Stagger>
+        <Stagger index={2} style={styles.letterFooter}>
+          <Text accessibilityRole="header" style={styles.letterTitle}>A question waits for you.</Text>
+          <Text style={styles.letterHint}>Press the seal to open tonight&apos;s letter.</Text>
+        </Stagger>
+      </Screen>
+    );
+  }
+
   if (phase === 'question') {
     return (
-      <Screen scroll={false} contentStyle={styles.screen}>
+      <Screen scroll={false} variant="night" contentStyle={styles.screen}>
         <Stagger index={0}>
-          <AppHeader label={`NIGHT ${nightIndex}`} onBack={onBack} />
+          <AppHeader night label={`NIGHT ${nightIndex}`} onBack={onBack} />
         </Stagger>
         <Stagger index={1} style={styles.questionWrap}>
+          {/* Tonight's sticker stays a secret until the take is sealed. The slot
+              above the letter holds its blind emboss, not the answer. */}
           <View style={styles.nightSticker}>
-            <Glow size={150} color={colors.rose} opacity={0.45} style={styles.stickerGlow} />
-            <Image source={stickerAssetForNight(completedStickerAssets, nightIndex)} resizeMode="contain" style={styles.nightStickerArt} />
+            <Glow size={190} color={colors.rose} opacity={0.45} style={styles.stickerGlow} />
+            <Image source={mysteryEmboss} resizeMode="contain" style={styles.nightStickerArt} />
+            <Sparkle size={12} color={night.candle} twinkle style={styles.mysterySparkle} />
           </View>
           <View style={styles.questionPaper}>
             <Sparkle size={15} color={colors.brass} twinkle style={styles.paperSparkle} />
-            <Text style={textStyles.eyebrow}>TONIGHT&apos;S QUESTION</Text>
+            <Text style={[textStyles.eyebrow, styles.paperEyebrow]}>TONIGHT&apos;S QUESTION</Text>
             <Text accessibilityRole="header" style={styles.question}>{question}</Text>
+            <View style={styles.dateRow}>
+              <View style={styles.dateLine} />
+              <Text style={styles.dateLabel}>{formatLongDate(new Date())}</Text>
+              <View style={styles.dateLine} />
+            </View>
           </View>
         </Stagger>
         <Stagger index={2} style={styles.questionFooter}>
@@ -272,8 +424,8 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
   const circumference = 2 * Math.PI * (RING / 2 - 3);
 
   return (
-    <Screen scroll={false} contentStyle={styles.screen}>
-      <AppHeader label={`NIGHT ${nightIndex}`} onBack={handleBack} />
+    <Screen scroll={false} variant="night" contentStyle={styles.screen}>
+      <AppHeader night label={`NIGHT ${nightIndex}`} onBack={handleBack} />
 
       <View style={styles.recordTop}>
         <Text numberOfLines={3} style={styles.smallQuestion}>{question}</Text>
@@ -283,7 +435,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
         >
           {String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(Math.floor(seconds % 60)).padStart(2, '0')}
         </Text>
-        <Waveform levels={recording ? levels : undefined} active={recording} compact />
+        <Waveform levels={recording ? levels : undefined} active={recording} idle={!recording && finalDuration === 0} compact />
         <Text style={[styles.limitHint, suggestedReached && styles.limitHintMet]}>
           {nearCap
             ? `Wrapping up at five minutes — ${Math.max(0, MAX_SECONDS - Math.floor(seconds))}s left.`
@@ -294,40 +446,73 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       </View>
 
       <View style={styles.recordArea}>
+        {/* Everything that must sit concentric with the button lives inside a
+            stage exactly the button's size. Centring these on the record area
+            instead put them low, because the labels below share that area and
+            push the button above its centre. */}
+        <View style={styles.buttonStage}>
+        {/* A resting warmth behind the idle button, so the recording stage
+            never reads as a blank void while it waits. */}
+        {!recording ? (
+          <View pointerEvents="none" style={GLOW_REST_LAYER}>
+            <Glow size={RING * 1.7} color={colors.rose} opacity={0.2} style={styles.glowInline} />
+          </View>
+        ) : null}
         {recording && !reducedMotion ? (
           <Animated.View
             pointerEvents="none"
             style={[
-              styles.auraLayer,
+              GLOW_AURA_LAYER,
               {
                 opacity: aura.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.9] }),
                 transform: [{ scale: aura.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1.22] }) }],
               },
             ]}
           >
-            <Glow size={RING * 2} color={colors.rose} opacity={0.5} style={{ left: -RING / 2, top: -RING / 2 }} />
+            <Glow size={RING * 2} color={colors.rose} opacity={0.5} style={styles.glowInline} />
+          </Animated.View>
+        ) : null}
+        {/* Candlelight that blooms with the voice itself. The breathing aura is
+            the room; this layer is the person speaking in it. */}
+        {recording && !reducedMotion ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              GLOW_VOICE_LAYER,
+              {
+                opacity: voice.interpolate({ inputRange: [0.12, 1], outputRange: [0.1, 0.85], extrapolate: 'clamp' }),
+                transform: [{ scale: voice.interpolate({ inputRange: [0.12, 1], outputRange: [0.9, 1.4], extrapolate: 'clamp' }) }],
+              },
+            ]}
+          >
+            <Glow size={RING * 2.2} color={night.candle} opacity={0.4} style={styles.glowInline} />
           </Animated.View>
         ) : null}
 
-        {/* Progress toward the hard cap, so the ceiling is visible rather than a surprise. */}
-        <View pointerEvents="none" style={styles.ring}>
-          <Svg width={RING} height={RING}>
-            <Circle
-              cx={RING / 2} cy={RING / 2} r={RING / 2 - 3}
-              stroke="rgba(190,111,124,0.16)" strokeWidth={3} fill="none"
-            />
-            <AnimatedCircle
-              cx={RING / 2} cy={RING / 2} r={RING / 2 - 3}
-              stroke={nearCap ? colors.ember : colors.brass}
-              strokeWidth={3}
-              strokeLinecap="round"
-              fill="none"
-              strokeDasharray={circumference}
-              strokeDashoffset={circumference * (1 - capProgress)}
-              transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
-            />
-          </Svg>
-        </View>
+        {/* Progress toward the hard cap — drawn only once a take is underway,
+            so the resting screen shows just the button. The layer is positioned
+            by offset rather than centred by flex, so the ring stays concentric
+            with the button on native and web alike. */}
+        {recording || seconds > 0 ? (
+          <View pointerEvents="none" style={RING_LAYER}>
+            <Svg width={RING} height={RING}>
+              <Circle
+                cx={RING / 2} cy={RING / 2} r={RING / 2 - 3}
+                stroke="rgba(190,111,124,0.16)" strokeWidth={3} fill="none"
+              />
+              <AnimatedCircle
+                cx={RING / 2} cy={RING / 2} r={RING / 2 - 3}
+                stroke={nearCap ? colors.ember : colors.brass}
+                strokeWidth={3}
+                strokeLinecap="round"
+                fill="none"
+                strokeDasharray={circumference}
+                strokeDashoffset={circumference * (1 - capProgress)}
+                transform={`rotate(-90 ${RING / 2} ${RING / 2})`}
+              />
+            </Svg>
+          </View>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"
@@ -344,6 +529,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
               : <Mic size={34} color={colors.white} strokeWidth={2} />}
           </View>
         </Pressable>
+        </View>
 
         <Text style={styles.hold}>
           {recording
@@ -367,7 +553,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       <BottomSheet
         visible={sheet === 'short'}
         title={`That was ${finalDuration} ${finalDuration === 1 ? 'second' : 'seconds'}.`}
-        body="Short is allowed — but you have not used your take yet, so you can start over if you would rather."
+        body="Short is allowed. But you have not used your take yet, so you can start over if you would rather."
         actions={[
           { label: 'Start this night over', variant: 'outline', onPress: () => void discard() },
           { label: 'Seal it anyway', onPress: () => void seal(finalDuration, finalUri) },
@@ -379,7 +565,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
         title="Without the microphone there is no app."
         body="Turn it on in Settings and come straight back."
         actions={[
-          { label: 'Open system settings', onPress: () => void Linking.openSettings() },
+          { label: 'Open system settings', onPress: () => void Linking.openSettings().catch(() => undefined) },
           { label: 'Check again', variant: 'outline', onPress: () => void requestMic() },
           { label: 'Close', variant: 'ghost', onPress: () => setSheet(null) },
         ]}
@@ -404,7 +590,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
         body="Nothing gets saved and tonight stays empty."
         actions={[
           { label: 'Keep recording', onPress: () => setSheet(null) },
-          { label: 'Leave', variant: 'ember', onPress: async () => { await recorder.stop(); onBack(); } },
+          { label: 'Leave', variant: 'ember', onPress: async () => { await recorder.stop(); recordingRef.current = false; onBack(); } },
         ]}
         onClose={() => setSheet(null)}
       />
@@ -421,40 +607,151 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 22,
-    paddingBottom: 24,
+    paddingBottom: 12,
   },
-  nightSticker: {
+
+  letterStage: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  letterEnvelope: {
+    width: 264,
+    height: 168,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(102,67,80,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+    shadowColor: '#0F060C',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.5,
+    shadowRadius: 30,
+    elevation: 12,
+  },
+  letterFlap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 168 * 0.62,
+    borderBottomLeftRadius: 120,
+    borderBottomRightRadius: 120,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(102,67,80,0.12)',
+    overflow: 'hidden',
+  },
+  letterSealWrap: {
     width: 92,
     height: 92,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stickerGlow: { left: -29, top: -29 },
-  nightStickerArt: { width: '112%', height: '112%' },
+  letterSealPressed: {
+    transform: [{ scale: 0.93 }],
+  },
+  letterSealGlow: {
+    left: -29,
+    top: -29,
+  },
+  letterSealArt: {
+    width: 84,
+    height: 84,
+  },
+  letterFlash: {
+    borderRadius: radii.md,
+    backgroundColor: '#FFF4E4',
+  },
+  letterSparkleOne: {
+    position: 'absolute',
+    top: '24%',
+    right: '18%',
+  },
+  letterSparkleTwo: {
+    position: 'absolute',
+    bottom: '26%',
+    left: '16%',
+  },
+  letterFooter: {
+    alignItems: 'center',
+    gap: 8,
+    paddingBottom: 26,
+  },
+  letterTitle: {
+    ...textStyles.heading,
+    color: night.text,
+    textAlign: 'center',
+  },
+  letterHint: {
+    ...textStyles.bodySmall,
+    color: night.textDim,
+    textAlign: 'center',
+  },
+  mysterySparkle: {
+    position: 'absolute',
+    top: 10,
+    right: 8,
+  },
+  nightSticker: {
+    width: 124,
+    height: 124,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Overlap the card below so sticker and paper read as one object.
+    marginBottom: -48,
+    zIndex: 1,
+  },
+  stickerGlow: { left: -33, top: -33 },
+  nightStickerArt: { width: '108%', height: '108%' },
   questionPaper: {
     width: '100%',
+    alignItems: 'center',
     justifyContent: 'center',
     gap: 18,
     paddingHorizontal: 26,
-    paddingVertical: 34,
+    paddingTop: 72,
+    paddingBottom: 30,
     borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.94)',
-    backgroundColor: 'rgba(255,253,249,0.9)',
+    backgroundColor: surfaces.card,
     ...shadows.floating,
   },
   paperSparkle: { position: 'absolute', right: 22, top: 20 },
+  paperEyebrow: {
+    textAlign: 'center',
+  },
   question: {
     ...textStyles.display,
-    fontSize: 37,
-    lineHeight: 45,
+    fontSize: 36,
+    lineHeight: 44,
+    textAlign: 'center',
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 6,
+    alignSelf: 'stretch',
+  },
+  dateLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.line,
+  },
+  dateLabel: {
+    ...textStyles.caption,
+    color: colors.boneFaint,
+    fontFamily: typography.serifItalic,
+    fontSize: 14,
   },
   questionFooter: {
     gap: 16,
   },
   note: {
     ...textStyles.bodySmall,
+    color: night.textDim,
     fontSize: 14,
     textAlign: 'center',
   },
@@ -466,7 +763,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.9)',
-    backgroundColor: 'rgba(255,253,249,0.76)',
+    backgroundColor: surfaces.card,
     ...shadows.soft,
     shadowOpacity: 0.07,
   },
@@ -499,19 +796,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  auraLayer: {
-    position: 'absolute',
-    width: RING,
-    height: RING,
+  /** Exactly the button's footprint, so every absolute overlay inside it is
+   *  concentric with the button. Larger glows overflow it on purpose. */
+  buttonStage: {
+    width: BUTTON,
+    height: BUTTON,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ring: {
-    position: 'absolute',
-    width: RING,
-    height: RING,
-    alignItems: 'center',
-    justifyContent: 'center',
+  glowInline: {
+    position: 'relative',
   },
   recordButton: {
     width: BUTTON,
@@ -549,11 +843,13 @@ const styles = StyleSheet.create({
   },
   hold: {
     ...textStyles.eyebrow,
+    color: night.candle,
     marginTop: 26,
     letterSpacing: 2,
   },
   holdHelp: {
     ...textStyles.caption,
+    color: night.textFaint,
     marginTop: 8,
     textAlign: 'center',
     maxWidth: 260,
@@ -567,7 +863,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(248,239,231,0.86)',
+    backgroundColor: 'rgba(31,14,23,0.78)',
   },
   sealingCard: {
     alignItems: 'center',

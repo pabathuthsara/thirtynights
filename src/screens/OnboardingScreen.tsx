@@ -19,7 +19,7 @@ import { Button, TextButton } from '@/components/Buttons';
 import { Screen } from '@/components/Screen';
 import { Glow, Sparkle } from '@/components/Sparkle';
 import { Waveform } from '@/components/Waveform';
-import { colors, motion, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, motion, nativeAnimationDriver, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { completedStickerAssets, embossedStickerAssets, keepsakeDecorations, stickerAssetForNight } from '@/data/keepsakeAssets';
 
@@ -58,8 +58,8 @@ function SlideVisual({ kind, reducedMotion }: { kind: Visual; reducedMotion: boo
   useEffect(() => {
     if (reducedMotion) return;
     const animation = Animated.loop(Animated.sequence([
-      Animated.timing(float, { toValue: 1, duration: 2800, easing: motion.easeInOut, useNativeDriver: true }),
-      Animated.timing(float, { toValue: 0, duration: 2800, easing: motion.easeInOut, useNativeDriver: true }),
+      Animated.timing(float, { toValue: 1, duration: 2800, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
+      Animated.timing(float, { toValue: 0, duration: 2800, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
     ]));
     animation.start();
     return () => animation.stop();
@@ -139,7 +139,7 @@ export function OnboardingScreen({ onComplete, onPreview }: { onComplete: () => 
     const next = Math.round(event.nativeEvent.contentOffset.x / pageWidth);
     if (next !== index) {
       setIndex(next);
-      if (Platform.OS !== 'web') void Haptics.selectionAsync();
+      if (Platform.OS !== 'web') void Haptics.selectionAsync().catch(() => undefined);
     }
   };
 
@@ -161,7 +161,7 @@ export function OnboardingScreen({ onComplete, onPreview }: { onComplete: () => 
         bounces={false}
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onMomentumEnd}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: true })}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], { useNativeDriver: nativeAnimationDriver })}
         scrollEventThrottle={16}
         style={styles.pager}
         contentContainerStyle={{ width: pageWidth * slides.length }}
@@ -181,7 +181,7 @@ export function OnboardingScreen({ onComplete, onPreview }: { onComplete: () => 
                   <SlideVisual kind={slide.visual} reducedMotion={reducedMotion} />
                 </View>
                 <View style={styles.copy}>
-                  <Text style={textStyles.eyebrow}>{slide.eyebrow}</Text>
+                  <Text style={styles.slideAside}>{slide.eyebrow}</Text>
                   <Text accessibilityRole="header" style={styles.title}>{slide.title}</Text>
                   <Text style={styles.body}>{slide.body}</Text>
                 </View>
@@ -282,7 +282,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 18,
     borderRadius: radii.lg,
-    backgroundColor: 'rgba(255,253,249,0.88)',
+    backgroundColor: surfaces.card,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.92)',
     ...shadows.floating,
@@ -314,6 +314,12 @@ const styles = StyleSheet.create({
   },
   copy: {
     gap: 12,
+  },
+  // A written aside, not a shouted kicker on every slide.
+  slideAside: {
+    color: colors.paperDim,
+    fontFamily: typography.serifItalic,
+    fontSize: 17,
   },
   title: {
     ...textStyles.title,

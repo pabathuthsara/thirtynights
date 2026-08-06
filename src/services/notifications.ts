@@ -105,7 +105,7 @@ export function subscribeToNotificationResponses(onNight: (nightIndex: number) =
     const index = response?.notification.request.content.data?.nightIndex;
     if (typeof index === 'number') onNight(index);
   };
-  void Notifications.getLastNotificationResponseAsync().then(open);
+  void Notifications.getLastNotificationResponseAsync().then(open).catch(() => undefined);
   const subscription = Notifications.addNotificationResponseReceivedListener(open);
   return () => subscription.remove();
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 
-import { colors, motion, windowRamp } from '@/theme';
+import { colors, motion, nativeAnimationDriver } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 const BAR_WIDTH = 3;
@@ -19,12 +19,16 @@ export function Waveform({
   paper = false,
   compact = false,
   active = false,
+  idle = false,
 }: {
   levels?: number[];
   progress?: number;
   paper?: boolean;
   compact?: boolean;
   active?: boolean;
+  /** Nothing recorded yet: render a quiet resting line instead of a fake
+   *  waveform shape, which read as "already recorded" next to a 00:00 timer. */
+  idle?: boolean;
 }) {
   const count = compact ? 38 : 52;
   const height = compact ? 40 : 52;
@@ -48,6 +52,11 @@ export function Waveform({
   }
 
   useEffect(() => {
+    if (idle) {
+      // A barely-breathing baseline: present, but clearly waiting for a voice.
+      scales.current.forEach((value, index) => value.setValue(0.1 + (seeded[index % seeded.length] ?? 0.5) * 0.08));
+      return;
+    }
     const animations = scales.current.map((value, index) => {
       // Live samples arrive newest-last; map them to the right-hand edge so the
       // meter reads as scrolling history.
@@ -62,13 +71,13 @@ export function Waveform({
         damping: 14,
         stiffness: 220,
         mass: 0.4,
-        useNativeDriver: true,
+        useNativeDriver: nativeAnimationDriver,
       });
     }).filter(Boolean) as Animated.CompositeAnimation[];
 
     if (!animations.length) return;
     Animated.parallel(animations).start();
-  }, [count, reducedMotion, targets]);
+  }, [count, idle, reducedMotion, seeded, targets]);
 
   return (
     <View
@@ -77,12 +86,14 @@ export function Waveform({
       style={[styles.row, { height }]}
     >
       {scales.current.map((scale, index) => {
-        const played = index / count <= progress;
-        const color = paper
-          ? played ? colors.roseText : 'rgba(110,75,91,0.22)'
-          : played || active
-            ? index % 6 === 0 ? colors.brass : colors.rose
-            : 'rgba(118,82,99,0.20)';
+        const played = !idle && index / count <= progress;
+        const color = idle
+          ? 'rgba(118,82,99,0.24)'
+          : paper
+            ? played ? colors.roseText : 'rgba(110,75,91,0.22)'
+            : played || active
+              ? index % 6 === 0 ? colors.brass : colors.rose
+              : 'rgba(118,82,99,0.20)';
         return (
           <Animated.View
             key={index}
@@ -91,7 +102,7 @@ export function Waveform({
               {
                 height: height - 8,
                 backgroundColor: color,
-                opacity: played || active ? 0.95 : 0.4,
+                opacity: idle ? 0.55 : played || active ? 0.95 : 0.4,
                 transform: [{ scaleY: scale }],
               },
             ]}

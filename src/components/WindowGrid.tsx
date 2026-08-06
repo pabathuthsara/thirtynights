@@ -1,9 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Svg, { Line } from 'react-native-svg';
 
-import { completedStickerAssets, embossedStickerAssets, stickerAssetForNight } from '@/data/keepsakeAssets';
+/** A missed night is marked, not left blank — two soft strokes, like a pencil
+ *  cross on a page. Legible at a glance without shouting. */
+function MissedMark({ size }: { size: number }) {
+  const inset = size * 0.3;
+  const far = size - inset;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Svg width={size} height={size}>
+        <Line x1={inset} y1={inset} x2={far} y2={far} stroke={colors.roseText} strokeWidth={1.8} strokeLinecap="round" strokeOpacity={0.55} />
+        <Line x1={far} y1={inset} x2={inset} y2={far} stroke={colors.roseText} strokeWidth={1.8} strokeLinecap="round" strokeOpacity={0.55} />
+      </Svg>
+    </View>
+  );
+}
+
+import { completedStickerAssets, embossedStickerAssets, isGildedNight, mysteryEmboss, stickerAssetForNight } from '@/data/keepsakeAssets';
 import { Glow, Sparkle } from '@/components/Sparkle';
-import { colors, motion, typography, weight } from '@/theme';
+import { colors, motion, nativeAnimationDriver, typography, weight } from '@/theme';
 import type { Night } from '@/types';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
@@ -23,14 +39,20 @@ type GridProps = {
   newlyEarned?: number;
 };
 
-const SIZE_CEILING = { thumbnail: 20, dense: 54, normal: 76 } as const;
+const SIZE_CEILING = { thumbnail: 20, dense: 54, normal: 76, shortDense: 64, shortNormal: 100 } as const;
 
 function gridMetrics(count: number, dense: boolean, thumbnail: boolean) {
-  const columns = count <= 7 ? Math.max(1, count) : 6;
-  const columnGap = thumbnail ? 3 : dense ? 5 : 8;
-  const rowGap = thumbnail ? 3 : dense ? 4 : 8;
+  // A short (trial) chapter lays out four wide with markedly larger art, so it
+  // reads as a real sticker sheet — not seven miniatures lost in a single row
+  // across an otherwise empty board.
+  const short = count <= 8;
+  const columns = count <= 4 ? Math.max(1, count) : short ? 4 : 6;
+  const columnGap = thumbnail ? 3 : dense ? 5 : short ? 10 : 8;
+  const rowGap = thumbnail ? 3 : dense ? 4 : short ? 10 : 8;
   const labelSpace = thumbnail ? 0 : dense ? 13 : 18;
-  const ceiling = thumbnail ? SIZE_CEILING.thumbnail : dense ? SIZE_CEILING.dense : SIZE_CEILING.normal;
+  const ceiling = thumbnail ? SIZE_CEILING.thumbnail
+    : dense ? (short ? SIZE_CEILING.shortDense : SIZE_CEILING.dense)
+      : short ? SIZE_CEILING.shortNormal : SIZE_CEILING.normal;
   return { columns, columnGap, rowGap, labelSpace, ceiling, rows: Math.max(1, Math.ceil(count / columns)) };
 }
 
@@ -70,7 +92,7 @@ function Dust({ size, reducedMotion }: { size: number; reducedMotion: boolean })
       duration: 900,
       delay: 220,
       easing: motion.easeGentle,
-      useNativeDriver: true,
+      useNativeDriver: nativeAnimationDriver,
     });
     animation.start();
     return () => animation.stop();
@@ -113,12 +135,17 @@ function Sticker({ night, size, onPress, thumbnail, reducedMotion, dense, isNew 
   const breathe = useRef(new Animated.Value(0)).current;
   const settle = useRef(new Animated.Value(1)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
+  /** One light sweep across the sticker that has just been earned. */
+  const sheen = useRef(new Animated.Value(0)).current;
 
   const completed = night.status === 'sealed' || night.status === 'revealed';
   const isToday = night.status === 'today';
   const missed = night.status === 'missed';
   const completedArt = stickerAssetForNight(completedStickerAssets, night.index);
-  const embossedArt = stickerAssetForNight(embossedStickerAssets, night.index);
+  // Unearned nights keep their sticker a secret: every future slot (and
+  // tonight's) wears the same blind emboss. Only a missed night shows its real
+  // motif, faded — you may see what the empty night would have held.
+  const embossedArt = missed ? stickerAssetForNight(embossedStickerAssets, night.index) : mysteryEmboss;
   const visualSize = size * (thumbnail ? 0.94 : 0.9);
   const labelSpace = thumbnail ? 0 : dense ? 13 : 18;
   const tilt = `${((night.index % 5) - 2) * 0.7}deg`;
@@ -131,23 +158,33 @@ function Sticker({ night, size, onPress, thumbnail, reducedMotion, dense, isNew 
       return;
     }
     settle.setValue(0);
-    const animation = Animated.spring(settle, {
-      toValue: 1,
-      damping: 11,
-      stiffness: 150,
-      mass: 0.7,
-      useNativeDriver: true,
-    });
+    sheen.setValue(0);
+    const animation = Animated.parallel([
+      Animated.spring(settle, {
+        toValue: 1,
+        damping: 11,
+        stiffness: 150,
+        mass: 0.7,
+        useNativeDriver: nativeAnimationDriver,
+      }),
+      Animated.timing(sheen, {
+        toValue: 1,
+        duration: 900,
+        delay: 260,
+        easing: motion.easeGentle,
+        useNativeDriver: nativeAnimationDriver,
+      }),
+    ]);
     animation.start();
     return () => animation.stop();
-  }, [isNew, reducedMotion, settle]);
+  }, [isNew, reducedMotion, settle, sheen]);
 
   // Slow breathing glow, 4.4s round trip, 90%→100% (§11.2 "Current-night glow").
   useEffect(() => {
     if (!isToday || reducedMotion) return;
     const animation = Animated.loop(Animated.sequence([
-      Animated.timing(breathe, { toValue: 1, duration: 2200, easing: motion.easeInOut, useNativeDriver: true }),
-      Animated.timing(breathe, { toValue: 0, duration: 2200, easing: motion.easeInOut, useNativeDriver: true }),
+      Animated.timing(breathe, { toValue: 1, duration: 2200, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
+      Animated.timing(breathe, { toValue: 0, duration: 2200, easing: motion.easeInOut, useNativeDriver: nativeAnimationDriver }),
     ]));
     animation.start();
     return () => animation.stop();
@@ -163,7 +200,7 @@ function Sticker({ night, size, onPress, thumbnail, reducedMotion, dense, isNew 
 
   const press = (toValue: number) => {
     if (reducedMotion || !onPress) return;
-    Animated.spring(pressScale, { toValue, damping: 16, stiffness: 400, mass: 0.5, useNativeDriver: true }).start();
+    Animated.spring(pressScale, { toValue, damping: 16, stiffness: 400, mass: 0.5, useNativeDriver: nativeAnimationDriver }).start();
   };
 
   return (
@@ -243,14 +280,40 @@ function Sticker({ night, size, onPress, thumbnail, reducedMotion, dense, isNew 
             <Image source={embossedArt} resizeMode="contain" style={[styles.art, styles.todayArt]} />
           </Animated.View>
         ) : (
-          <View style={[styles.fill, missed && styles.missed]}>
-            <Image source={embossedArt} resizeMode="contain" style={[styles.art, styles.embossedArt]} />
+          <View style={styles.fill}>
+            {/* The motif stays faint; the cross over it does not, so a missed
+                night reads as marked rather than merely dim. */}
+            <View style={[styles.fill, missed && styles.missed]}>
+              <Image source={embossedArt} resizeMode="contain" style={[styles.art, styles.embossedArt]} />
+            </View>
+            {missed && !thumbnail ? <MissedMark size={visualSize} /> : null}
           </View>
         )}
         {isNew && !thumbnail ? <Dust size={visualSize} reducedMotion={reducedMotion} /> : null}
+        {/* A single band of light travelling across the fresh sticker, once. */}
+        {isNew && !thumbnail && !reducedMotion ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.sheen,
+              {
+                height: visualSize * 1.5,
+                opacity: sheen.interpolate({ inputRange: [0, 0.25, 0.75, 1], outputRange: [0, 0.75, 0.55, 0] }),
+                transform: [
+                  { rotate: '22deg' },
+                  { translateX: sheen.interpolate({ inputRange: [0, 1], outputRange: [-visualSize, visualSize] }) },
+                ],
+              },
+            ]}
+          />
+        ) : null}
+        {/* An earned gilded night keeps a live glint on the sheet — the rarity
+            stays visible after the ceremony, not just during it. */}
+        {completed && isGildedNight(night.index) && !thumbnail && !dense ? (
+          <Sparkle size={10} color={colors.brass} twinkle delay={(night.index % 6) * 700} style={styles.gildedGlint} />
+        ) : null}
       </Animated.View>
 
-      {missed && !thumbnail ? <View style={styles.missedMark} /> : null}
 
       {!thumbnail ? (
         <Text
@@ -288,11 +351,12 @@ export function WindowGrid({
     ];
   }, [nights, padToSheet]);
 
-  // A seven-night trial reads as one clean week rather than a six-wide grid
-  // with a single orphan on the second row.
   const { columns, columnGap, rowGap, labelSpace, ceiling, rows } = gridMetrics(displayedNights.length, dense, thumbnail);
   const widthLimit = thumbnail ? 84 : maxWidth ?? 360;
-  const sizeFromWidth = (widthLimit - columnGap * (columns - 1)) / columns;
+  // Leave a one-point rounding guard. Fabric rounds child widths to physical
+  // pixels; an exact mathematical fit could otherwise push the final sticker
+  // onto an orphan row inside bordered cards.
+  const sizeFromWidth = (widthLimit - columnGap * (columns - 1) - 1) / columns;
   const sizeFromHeight = maxHeight
     ? (maxHeight - rowGap * (rows - 1)) / rows - labelSpace
     : Number.POSITIVE_INFINITY;
@@ -328,6 +392,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
+    // A partial final row (e.g. three of four on a short sheet) sits centred,
+    // which reads as deliberate composition rather than a ragged edge.
+    justifyContent: 'center',
     position: 'relative',
   },
   slot: {
@@ -394,15 +461,16 @@ const styles = StyleSheet.create({
   missed: {
     opacity: 0.4,
   },
-  missedMark: {
+  sheen: {
     position: 'absolute',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    top: 2,
-    right: 2,
-    backgroundColor: colors.ember,
-    opacity: 0.75,
+    width: 10,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  gildedGlint: {
+    position: 'absolute',
+    top: -1,
+    right: -2,
   },
   dustLayer: {
     position: 'absolute',

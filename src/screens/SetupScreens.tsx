@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { BellRing, Check } from 'lucide-react-native';
 
@@ -7,7 +7,7 @@ import { Button, TextButton } from '@/components/Buttons';
 import { Screen, Stagger } from '@/components/Screen';
 import { Glow, Sparkle } from '@/components/Sparkle';
 import { formatClock } from '@/domain/format';
-import { colors, HIT_TARGET, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, HIT_TARGET, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 
 // Realistic bedtimes, evening through the small hours.
 const hours = [19, 20, 21, 22, 23, 0, 1, 2];
@@ -20,7 +20,7 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
   onContinue: () => void;
 }) {
   const select = (nextHour: number, nextMinute: number) => {
-    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    if (Platform.OS !== 'web') void Haptics.selectionAsync().catch(() => undefined);
     onChange(nextHour, nextMinute);
   };
 
@@ -35,14 +35,12 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
       <Stagger index={1} style={styles.clockWrap}>
         <Glow size={260} color={colors.rose} opacity={0.22} style={styles.clockGlow} />
         <Sparkle size={14} color={colors.brass} twinkle style={styles.clockSparkle} />
-        <Text style={styles.clock}>{formatClock(hour, minute)}</Text>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={styles.clock}>
+          {formatClock(hour, minute)}
+        </Text>
 
         <Text style={styles.pickerLabel}>HOUR</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-        >
+        <View accessibilityRole="radiogroup" style={styles.optionGrid}>
           {hours.map((value) => {
             const selected = hour === value;
             return (
@@ -52,18 +50,18 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
                 accessibilityState={{ checked: selected }}
                 accessibilityLabel={formatClock(value, minute)}
                 onPress={() => select(value, minute)}
-                style={[styles.chip, selected && styles.chipSelected]}
+                style={({ pressed }) => [styles.chip, styles.gridChip, selected && styles.chipSelected, pressed && styles.chipPressed]}
               >
                 <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
-                  {formatClock(value, 0).replace(/[:.]00/, '')}
+                  {formatClock(value, 0).replace(':00', '')}
                 </Text>
               </Pressable>
             );
           })}
-        </ScrollView>
+        </View>
 
         <Text style={styles.pickerLabel}>MINUTES</Text>
-        <View style={styles.chipRow}>
+        <View accessibilityRole="radiogroup" style={styles.optionGrid}>
           {minutes.map((value) => {
             const selected = minute === value;
             return (
@@ -73,7 +71,7 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
                 accessibilityState={{ checked: selected }}
                 accessibilityLabel={`${value} minutes past`}
                 onPress={() => select(hour, value)}
-                style={[styles.chip, styles.minuteChip, selected && styles.chipSelected]}
+                style={({ pressed }) => [styles.chip, styles.gridChip, selected && styles.chipSelected, pressed && styles.chipPressed]}
               >
                 <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
                   :{String(value).padStart(2, '0')}
@@ -172,7 +170,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.92)',
-    backgroundColor: 'rgba(255,253,249,0.86)',
+    backgroundColor: surfaces.card,
     overflow: 'hidden',
     ...shadows.floating,
   },
@@ -191,25 +189,31 @@ const styles = StyleSheet.create({
     letterSpacing: 1.8,
     marginTop: 6,
   },
-  chipRow: {
+  optionGrid: {
+    width: '100%',
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: 8,
-    paddingHorizontal: 2,
   },
   chip: {
     minHeight: HIT_TARGET,
-    minWidth: 62,
-    paddingHorizontal: 14,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: colors.lineStrong,
-    backgroundColor: 'rgba(255,255,255,0.7)',
+    backgroundColor: surfaces.card,
   },
-  minuteChip: { minWidth: 66 },
+  gridChip: {
+    flexBasis: '22%',
+    flexGrow: 1,
+  },
+  chipPressed: {
+    opacity: 0.72,
+    transform: [{ scale: 0.97 }],
+  },
   chipSelected: {
     backgroundColor: colors.roseDeep,
     borderColor: colors.roseDeep,
@@ -236,7 +240,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.9)',
-    backgroundColor: 'rgba(255,253,249,0.86)',
+    backgroundColor: surfaces.card,
     ...shadows.floating,
   },
   bellGlow: { top: -47, left: -47 },

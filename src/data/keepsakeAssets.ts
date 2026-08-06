@@ -83,3 +83,14 @@ export const keepsakeTextures = {
 export function stickerAssetForNight(assets: ImageSourcePropType[], nightIndex: number) {
   return (assets[(Math.max(1, nightIndex) - 1) % assets.length] ?? completedStickerAssets[0]) as ImageSourcePropType;
 }
+
+/** The blind emboss every unearned night wears. One neutral stitched disc —
+ *  never the night's real motif. Tomorrow's sticker stays unknown until the
+ *  wax cracks; printing the answer on the sheet was killing the reveal. */
+export const mysteryEmboss = embossedStickerAssets[12] as ImageSourcePropType;
+
+/** Nights whose stickers arrive gilded — the checkpoint rhythm of the chapter.
+ *  Rare enough to stay an event, predictable enough to feel like structure. */
+export function isGildedNight(nightIndex: number) {
+  return nightIndex === 1 || nightIndex % 7 === 0 || nightIndex === 30;
+}

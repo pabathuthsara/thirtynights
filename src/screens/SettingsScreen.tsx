@@ -28,7 +28,7 @@ import { Button } from '@/components/Buttons';
 import { Screen, Stagger } from '@/components/Screen';
 import { Toast, type ToastMessage } from '@/components/Toast';
 import { formatClock } from '@/domain/format';
-import { colors, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 
 function Row({ icon: Icon, title, detail, onPress, control, danger = false, last = false, busy = false }: {
   icon: LucideIcon;
@@ -73,7 +73,7 @@ function SwitchRow({ icon, title, detail, value, onValueChange, last = false }: 
   last?: boolean;
 }) {
   const toggle = () => {
-    if (Platform.OS !== 'web') void Haptics.selectionAsync();
+    if (Platform.OS !== 'web') void Haptics.selectionAsync().catch(() => undefined);
     onValueChange(!value);
   };
   return (
@@ -93,8 +93,9 @@ function SwitchRow({ icon, title, detail, value, onValueChange, last = false }: 
         {detail ? <Text style={styles.rowDetail}>{detail}</Text> : null}
       </View>
       <Switch
+        accessible={false}
+        pointerEvents="none"
         value={value}
-        onValueChange={onValueChange}
         // The off state used to be near-invisible cream on cream.
         trackColor={{ false: '#D9C3CB', true: colors.roseDeep }}
         thumbColor={colors.white}
@@ -313,7 +314,7 @@ export function SettingsScreen(props: SettingsProps) {
           title={busy === 'delete' ? 'Deleting…' : 'Delete your nights?'}
           body={busy === 'delete'
             ? 'Removing your recordings and reports. Please keep the app open.'
-            : 'This permanently removes recordings, dates, and reports from the selected locations. Store transaction records held by Apple or Google are not erased. Export first if you need a copy. This cannot be undone.'}
+            : `This permanently removes recordings, dates, and reports from the selected locations. Purchase records held by ${Platform.OS === 'android' ? 'Google Play' : 'the App Store'} are not erased. Export first if you need a copy. This cannot be undone.`}
           actions={busy === 'delete' ? [] : [
             ...(hasCloudIdentity
               ? [{
@@ -349,7 +350,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.92)',
     borderRadius: radii.lg,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,253,249,0.88)',
+    backgroundColor: surfaces.card,
     ...shadows.soft,
     shadowOpacity: 0.08,
   },

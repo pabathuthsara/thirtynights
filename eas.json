@@ -23,6 +23,18 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "//": "ascAppId is the numeric Apple ID from App Store Connect > App Information. appleTeamId is on developer.apple.com > Membership. Neither is a secret; the App Store Connect API key is, and belongs in EAS credentials, not here.",
+        "ascAppId": "REPLACE_WITH_APP_STORE_CONNECT_APP_ID",
+        "appleTeamId": "REPLACE_WITH_APPLE_TEAM_ID"
+      },
+      "android": {
+        "//": "Upload to the closed-testing track first and promote from the Play Console once the release has been reviewed. Point serviceAccountKeyPath at a local JSON key that is NOT committed, or omit it and let `eas credentials` hold the key.",
+        "track": "internal",
+        "releaseStatus": "draft",
+        "changesNotSentForReview": false
+      }
+    }
   }
 }

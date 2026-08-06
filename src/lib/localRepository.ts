@@ -12,6 +12,7 @@ const LEGACY_KEY = 'thirtynights.snapshot.v1';
 const WEB_KEY = 'thirtynights.snapshot.v2';
 const DATABASE = 'thirtynights.db';
 let database: Promise<SQLiteDatabase> | null = null;
+let nativeWriteQueue: Promise<void> = Promise.resolve();
 
 type ChapterRow = {
   id: string;
@@ -34,45 +35,60 @@ type NightRow = {
 type ReportRow = { payload: string };
 
 async function db() {
-  if (!database) database = openDatabaseAsync(DATABASE);
-  const instance = await database;
-  await instance.execAsync(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER PRIMARY KEY, migration_applied_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS chapters (
-      id TEXT PRIMARY KEY, target_length INTEGER NOT NULL, access_through INTEGER NOT NULL,
-      question_set TEXT NOT NULL, started_at TEXT NOT NULL, timezone TEXT NOT NULL,
-      status TEXT NOT NULL, server_revision INTEGER NOT NULL DEFAULT 0,
-      purchase_status TEXT, completed_at TEXT, is_current INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE IF NOT EXISTS nights (
-      id TEXT PRIMARY KEY, chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
-      night_index INTEGER NOT NULL, expected_local_date TEXT NOT NULL, question_id TEXT NOT NULL,
-      question_version TEXT NOT NULL, state TEXT NOT NULL, recorded_at TEXT, duration_sec INTEGER,
-      recorded_hour INTEGER, local_uri TEXT, storage_path TEXT, reveal_at TEXT, payload TEXT NOT NULL,
-      UNIQUE(chapter_id, night_index), UNIQUE(chapter_id, expected_local_date)
-    );
-    CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY, chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
-      checkpoint INTEGER NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL,
-      UNIQUE(chapter_id, checkpoint)
-    );
-    CREATE TABLE IF NOT EXISTS outbox (
-      operation_id TEXT PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL,
-      operation TEXT NOT NULL, payload TEXT NOT NULL, payload_hash TEXT NOT NULL,
-      attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL,
-      last_error TEXT, completed_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS file_manifest (
-      night_id TEXT PRIMARY KEY REFERENCES nights(id) ON DELETE CASCADE, uri TEXT NOT NULL,
-      byte_size INTEGER NOT NULL, checksum TEXT NOT NULL, upload_state TEXT NOT NULL,
-      upload_session TEXT, verified_at TEXT
-    );
-    INSERT OR IGNORE INTO schema_meta(version, migration_applied_at) VALUES (2, datetime('now'));
-  `);
-  return instance;
+  if (!database) {
+    // Initialization used to run on every call to db(). A snapshot save and a
+    // background sync could therefore execute the schema batch concurrently,
+    // leaving SQLite to reject statement finalization with "database is
+    // locked". Cache the fully initialized connection instead.
+    database = (async () => {
+      const instance = await openDatabaseAsync(DATABASE);
+      await instance.execAsync(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA busy_timeout = 5000;
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER PRIMARY KEY, migration_applied_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS chapters (
+          id TEXT PRIMARY KEY, target_length INTEGER NOT NULL, access_through INTEGER NOT NULL,
+          question_set TEXT NOT NULL, started_at TEXT NOT NULL, timezone TEXT NOT NULL,
+          status TEXT NOT NULL, server_revision INTEGER NOT NULL DEFAULT 0,
+          purchase_status TEXT, completed_at TEXT, is_current INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS nights (
+          id TEXT PRIMARY KEY, chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+          night_index INTEGER NOT NULL, expected_local_date TEXT NOT NULL, question_id TEXT NOT NULL,
+          question_version TEXT NOT NULL, state TEXT NOT NULL, recorded_at TEXT, duration_sec INTEGER,
+          recorded_hour INTEGER, local_uri TEXT, storage_path TEXT, reveal_at TEXT, payload TEXT NOT NULL,
+          UNIQUE(chapter_id, night_index), UNIQUE(chapter_id, expected_local_date)
+        );
+        CREATE TABLE IF NOT EXISTS reports (
+          id TEXT PRIMARY KEY, chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+          checkpoint INTEGER NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL,
+          UNIQUE(chapter_id, checkpoint)
+        );
+        CREATE TABLE IF NOT EXISTS outbox (
+          operation_id TEXT PRIMARY KEY, entity TEXT NOT NULL, entity_id TEXT NOT NULL,
+          operation TEXT NOT NULL, payload TEXT NOT NULL, payload_hash TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL,
+          last_error TEXT, completed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS file_manifest (
+          night_id TEXT PRIMARY KEY REFERENCES nights(id) ON DELETE CASCADE, uri TEXT NOT NULL,
+          byte_size INTEGER NOT NULL, checksum TEXT NOT NULL, upload_state TEXT NOT NULL,
+          upload_session TEXT, verified_at TEXT
+        );
+        INSERT OR IGNORE INTO schema_meta(version, migration_applied_at) VALUES (2, datetime('now'));
+      `);
+      return instance;
+    })();
+  }
+  return database;
+}
+
+function serializeNativeWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const result = nativeWriteQueue.then(operation, operation);
+  nativeWriteQueue = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 function appPreferences(snapshot: AppSnapshot) {
@@ -87,7 +103,7 @@ type PendingOutboxInsert = {
   payloadHash: string;
 };
 
-async function saveNative(
+async function saveNativeNow(
   snapshot: AppSnapshot,
   existingInstance?: SQLiteDatabase,
   outbox: PendingOutboxInsert | PendingOutboxInsert[] = [],
@@ -140,6 +156,14 @@ async function saveNative(
       );
     }
   });
+}
+
+function saveNative(
+  snapshot: AppSnapshot,
+  existingInstance?: SQLiteDatabase,
+  outbox: PendingOutboxInsert | PendingOutboxInsert[] = [],
+) {
+  return serializeNativeWrite(() => saveNativeNow(snapshot, existingInstance, outbox));
 }
 
 async function loadNative() {
@@ -398,25 +422,31 @@ export async function pendingOutboxOperations() {
 
 export async function completeOutboxOperation(operationId: string) {
   if (Platform.OS === 'web') return;
-  const instance = await db();
-  await instance.runAsync('UPDATE outbox SET completed_at = ?, last_error = NULL WHERE operation_id = ?', new Date().toISOString(), operationId);
+  await serializeNativeWrite(async () => {
+    const instance = await db();
+    await instance.runAsync('UPDATE outbox SET completed_at = ?, last_error = NULL WHERE operation_id = ?', new Date().toISOString(), operationId);
+  });
 }
 
 export async function failOutboxOperation(operationId: string, attempts: number, error: string) {
   if (Platform.OS === 'web') return;
-  const instance = await db();
-  const delay = Math.min(3600, 2 ** Math.min(attempts + 1, 10) * 5) * 1000;
-  await instance.runAsync(
-    'UPDATE outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE operation_id = ?',
-    attempts + 1, new Date(Date.now() + delay + Math.random() * 3000).toISOString(), error.slice(0, 300), operationId,
-  );
+  await serializeNativeWrite(async () => {
+    const instance = await db();
+    const delay = Math.min(3600, 2 ** Math.min(attempts + 1, 10) * 5) * 1000;
+    await instance.runAsync(
+      'UPDATE outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE operation_id = ?',
+      attempts + 1, new Date(Date.now() + delay + Math.random() * 3000).toISOString(), error.slice(0, 300), operationId,
+    );
+  });
 }
 
 export async function clearLocalState() {
   await AsyncStorage.removeItem(WEB_KEY);
   await AsyncStorage.removeItem(LEGACY_KEY);
   if (Platform.OS !== 'web') {
-    const instance = await db();
-    await instance.execAsync('DELETE FROM reports; DELETE FROM outbox; DELETE FROM file_manifest; DELETE FROM nights; DELETE FROM chapters; DELETE FROM preferences;');
+    await serializeNativeWrite(async () => {
+      const instance = await db();
+      await instance.execAsync('DELETE FROM reports; DELETE FROM outbox; DELETE FROM file_manifest; DELETE FROM nights; DELETE FROM chapters; DELETE FROM preferences;');
+    });
   }
 }

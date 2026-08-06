@@ -3,15 +3,17 @@ import { ArrowLeft, Settings, Share2 } from 'lucide-react-native';
 
 import { IconButton } from '@/components/Buttons';
 import { Sparkle } from '@/components/Sparkle';
-import { colors, HIT_TARGET, textStyles } from '@/theme';
+import { colors, HIT_TARGET, night as nightTheme, textStyles } from '@/theme';
 
-export function AppHeader({ label, onBack, onSettings, onShare, paper = false, compact = false }: {
+export function AppHeader({ label, onBack, onSettings, onShare, paper = false, compact = false, night = false }: {
   label?: string;
   onBack?: () => void;
   onSettings?: () => void;
   onShare?: () => void;
   paper?: boolean;
   compact?: boolean;
+  /** Rendered over the nightfall atmosphere. */
+  night?: boolean;
 }) {
   const rightCount = (onSettings ? 1 : 0) + (onShare ? 1 : 0);
   // Both flanks reserve the same width so the title stays optically centred,
@@ -21,18 +23,18 @@ export function AppHeader({ label, onBack, onSettings, onShare, paper = false, c
   return (
     <View style={[styles.header, compact && styles.compactHeader]}>
       <View style={[styles.side, { width: flank }]}>
-        {onBack ? <IconButton icon={ArrowLeft} onPress={onBack} paper={paper} label="Go back" /> : null}
+        {onBack ? <IconButton icon={ArrowLeft} onPress={onBack} paper={paper} night={night} label="Go back" /> : null}
       </View>
       {label ? (
         <View style={styles.center}>
-          <Sparkle size={11} color={colors.brass} />
-          <Text numberOfLines={1} style={[textStyles.eyebrow, styles.label, paper && styles.paperLabel]}>{label}</Text>
-          <Sparkle size={11} color={colors.brass} />
+          <Sparkle size={11} color={night ? nightTheme.candle : colors.brass} />
+          <Text numberOfLines={1} style={[textStyles.eyebrow, styles.label, paper && styles.paperLabel, night && styles.nightLabel]}>{label}</Text>
+          <Sparkle size={11} color={night ? nightTheme.candle : colors.brass} />
         </View>
       ) : <View style={styles.center} />}
       <View style={[styles.side, styles.right, { width: flank }]}>
-        {onShare ? <IconButton icon={Share2} onPress={onShare} paper={paper} label="Share" /> : null}
-        {onSettings ? <IconButton icon={Settings} onPress={onSettings} paper={paper} label="Open settings" /> : null}
+        {onShare ? <IconButton icon={Share2} onPress={onShare} paper={paper} night={night} label="Share" /> : null}
+        {onSettings ? <IconButton icon={Settings} onPress={onSettings} paper={paper} night={night} label="Open settings" /> : null}
       </View>
     </View>
   );
@@ -74,5 +76,8 @@ const styles = StyleSheet.create({
   },
   paperLabel: {
     color: colors.paperDim,
+  },
+  nightLabel: {
+    color: nightTheme.textDim,
   },
 });

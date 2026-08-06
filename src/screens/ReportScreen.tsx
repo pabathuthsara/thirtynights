@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Pause, Play, Quote, RotateCcw, Save } from 'lucide-react-native';
+import { Pause, Play, Quote, RotateCcw, Share2 } from 'lucide-react-native';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 
 import { AppHeader } from '@/components/AppHeader';
@@ -12,7 +12,7 @@ import { Waveform } from '@/components/Waveform';
 import { WindowGrid } from '@/components/WindowGrid';
 import { chapterTitle, isRecorded, totalVoiceSeconds } from '@/domain/stats';
 import { formatDuration } from '@/domain/format';
-import { colors, gradients, radii, shadows, textStyles, typography, weight } from '@/theme';
+import { colors, gradients, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 import type { Chapter, Report, ReportEvidence } from '@/types';
 
 function clockLabel(seconds: number) {
@@ -38,6 +38,10 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
   const [playerError, setPlayerError] = useState('');
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [activeEvidence, setActiveEvidence] = useState<string | null>(null);
+  /** Kept per quote so the message lands in the card whose wax was pressed. A
+   *  single page-level error sat two screens above the control that caused it,
+   *  which read as the wax simply not working. */
+  const [evidenceError, setEvidenceError] = useState<{ segmentId: string; message: string } | null>(null);
   const loadedSource = useRef<string | null>(null);
   const evidenceSource = useRef<string | null>(null);
   const evidenceStop = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,7 +91,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
   const playEvidence = useCallback(async (evidence: ReportEvidence) => {
     if (!onResolveNightAudio) return;
     try {
-      setPlayerError('');
+      setEvidenceError(null);
       if (evidenceStop.current) clearTimeout(evidenceStop.current);
       if (activeEvidence === evidence.segmentId && evidenceStatus.playing) {
         evidencePlayer.pause();
@@ -110,7 +114,10 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
       }, Math.max(400, evidence.endMs - evidence.startMs));
     } catch (error) {
       setActiveEvidence(null);
-      setPlayerError(error instanceof Error ? error.message : 'That moment could not be played.');
+      setEvidenceError({
+        segmentId: evidence.segmentId,
+        message: error instanceof Error ? error.message : 'That moment could not be played.',
+      });
     }
   }, [activeEvidence, evidencePlayer, evidenceStatus.playing, onResolveNightAudio, player, status.playing]);
 
@@ -141,7 +148,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
 
       {report?.status === 'ready' ? (
         <>
-          {report.audioPath ? (
+          {report.audioPath || report.audioUrl ? (
             <Stagger index={2}>
               <View style={styles.playerCard}>
                 <View style={styles.playerRow}>
@@ -187,37 +194,45 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
           {report.sections.map((section, index) => (
             <Stagger key={`${section.title}-${index}`} index={3 + index}>
               <View style={styles.section}>
-                <Text style={styles.eyebrow}>{section.eyebrow || `THREAD ${index + 1}`}</Text>
+                <Text style={styles.eyebrow}>{section.eyebrow || `Thread ${index + 1}`}</Text>
                 <Text accessibilityRole="header" style={styles.sectionTitle}>{section.title}</Text>
                 <Text style={styles.body}>{section.body}</Text>
                 {section.evidence.map((evidence) => {
                   const playingThis = activeEvidence === evidence.segmentId;
                   return (
+                    // A quote is a scrap of the night it came from, held down by a
+                    // wax dot. Pressing the wax plays the exact seconds that were
+                    // spoken — the seal is the affordance, not a button beside it.
                     <View key={evidence.segmentId} style={styles.quoteCard}>
-                      <Quote size={17} strokeWidth={2} color={colors.brass} />
+                      {onResolveNightAudio ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Play this moment from night ${evidence.nightIndex}`}
+                          onPress={() => void playEvidence(evidence)}
+                          hitSlop={10}
+                          style={({ pressed }) => [styles.waxDot, playingThis && styles.waxDotActive, pressed && styles.waxDotPressed]}
+                        >
+                          {playingThis && !evidenceStatus.playing ? (
+                            <ActivityIndicator size="small" color={colors.white} />
+                          ) : playingThis ? (
+                            <Pause size={15} strokeWidth={2.6} color={colors.white} fill={colors.white} />
+                          ) : (
+                            <Play size={15} strokeWidth={2.6} color={colors.white} fill={colors.white} />
+                          )}
+                        </Pressable>
+                      ) : (
+                        <View style={styles.waxDot}>
+                          <Quote size={15} strokeWidth={2.4} color={colors.white} />
+                        </View>
+                      )}
                       {evidence.quote ? <Text style={styles.quote}>{evidence.quote}</Text> : null}
-                      <View style={styles.quoteFoot}>
-                        <Text style={styles.night}>
-                          Night {evidence.nightIndex} · {formatDuration(Math.floor(evidence.startMs / 1000))}
-                        </Text>
-                        {onResolveNightAudio ? (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Play this moment from night ${evidence.nightIndex}`}
-                            onPress={() => void playEvidence(evidence)}
-                            style={({ pressed }) => [styles.evidenceButton, pressed && styles.pressed]}
-                          >
-                            {playingThis && !evidenceStatus.playing ? (
-                              <ActivityIndicator size="small" color={colors.roseText} />
-                            ) : playingThis ? (
-                              <Pause size={13} strokeWidth={2.4} color={colors.roseText} />
-                            ) : (
-                              <Play size={13} strokeWidth={2.4} color={colors.roseText} />
-                            )}
-                            <Text style={styles.evidenceLabel}>{playingThis ? 'Playing' : 'Hear it'}</Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
+                      <Text style={styles.night}>
+                        Night {evidence.nightIndex} · {formatDuration(Math.floor(evidence.startMs / 1000))}
+                        {onResolveNightAudio ? (playingThis ? ' · playing' : ' · press the wax to hear it') : ''}
+                      </Text>
+                      {evidenceError?.segmentId === evidence.segmentId ? (
+                        <Text accessibilityRole="alert" style={styles.evidenceError}>{evidenceError.message}</Text>
+                      ) : null}
                     </View>
                   );
                 })}
@@ -228,11 +243,11 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
           <Stagger index={3 + report.sections.length}>
             <View style={styles.summary}>
               <LinearGradient colors={['rgba(255,255,255,0.6)', 'rgba(255,255,255,0)']} style={styles.cardSheen} pointerEvents="none" />
-              <Text style={styles.eyebrow}>THE ARC</Text>
+              <Text style={styles.eyebrow}>The arc</Text>
               <Text style={styles.summaryTitle}>{report.summary || 'No single pattern needed to be invented.'}</Text>
             </View>
             <View style={styles.actions}>
-              <Button variant="paper" icon={Save} onPress={onShare}>Save this</Button>
+              <Button variant="paper" icon={Share2} onPress={onShare}>Share reflection</Button>
               {onContinue ? <Button variant="outline" onPress={onContinue}>Continue the thread</Button> : null}
             </View>
           </Stagger>
@@ -240,18 +255,27 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
       ) : report?.status === 'failed' ? (
         <Stagger index={2}>
           <View style={styles.unavailableCard}>
-            <Text style={styles.eyebrow}>REPORT NEEDS ATTENTION</Text>
+            <Text style={styles.eyebrow}>This report needs attention</Text>
             <Text style={styles.summaryTitle}>Your recordings remain sealed and safe.</Text>
             <Text style={styles.body}>
               The report stopped rather than substituting sample conclusions. Reference: {report.traceId || 'available to support'}.
             </Text>
-            {onRetry ? <Button variant="paper" onPress={() => void onRetry()}>Retry report</Button> : null}
+            {onRetry ? (
+              <Button
+                variant="paper"
+                onPress={() => void onRetry().catch((error: unknown) => setPlayerError(
+                  error instanceof Error ? error.message : 'The report could not be retried.',
+                ))}
+              >
+                Retry report
+              </Button>
+            ) : null}
           </View>
         </Stagger>
       ) : (
         <Stagger index={2}>
           <View style={styles.unavailableCard}>
-            <Text style={styles.eyebrow}>{report?.status === 'running' ? 'CREATING YOUR REPORT' : 'REPORT QUEUED'}</Text>
+            <Text style={styles.eyebrow}>{report?.status === 'running' ? 'Creating your report' : 'Report queued'}</Text>
             <Text style={styles.summaryTitle}>Your chapter is sealed.</Text>
             <Text style={styles.body}>
               {report
@@ -278,7 +302,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.9)',
-    backgroundColor: 'rgba(255,253,249,0.82)',
+    backgroundColor: surfaces.card,
     overflow: 'hidden',
     ...shadows.floating,
     shadowOpacity: 0.12,
@@ -310,7 +334,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.9)',
-    backgroundColor: 'rgba(255,253,249,0.86)',
+    backgroundColor: surfaces.card,
     ...shadows.soft,
   },
   playerRow: {
@@ -327,7 +351,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.lineStrong,
-    backgroundColor: 'rgba(255,255,255,0.7)',
+    backgroundColor: surfaces.card,
   },
   restartDisabled: { opacity: 0.4 },
   wave: { marginTop: 16, paddingVertical: 6 },
@@ -348,12 +372,11 @@ const styles = StyleSheet.create({
     paddingTop: 28,
     marginTop: 16,
   },
+  // A written aside in the margin of the letter, not another shouted kicker.
   eyebrow: {
-    color: colors.brassText,
-    fontFamily: typography.monoMedium,
-    fontSize: 11,
-    letterSpacing: 1.6,
-    textTransform: 'uppercase',
+    color: colors.paperDim,
+    fontFamily: typography.serifItalic,
+    fontSize: 17,
     marginBottom: 12,
   },
   sectionTitle: {
@@ -371,50 +394,59 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 28,
   },
+  // A torn scrap of paper, tilted slightly, with room at the top for the wax
+  // dot that overlaps its edge.
   quoteCard: {
-    marginTop: 20,
-    padding: 18,
-    borderRadius: radii.lg,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.blush,
+    marginTop: 30,
+    paddingTop: 30,
+    paddingBottom: 18,
+    paddingHorizontal: 20,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.line,
-    backgroundColor: 'rgba(255,253,249,0.86)',
+    backgroundColor: surfaces.card,
+    transform: [{ rotate: '-0.5deg' }],
     ...shadows.soft,
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.09,
+  },
+  waxDot: {
+    position: 'absolute',
+    top: -18,
+    left: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.roseDeep,
+    borderWidth: 2,
+    borderColor: colors.white,
+    shadowColor: '#7A3244',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.34,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  waxDotActive: {
+    backgroundColor: colors.brassText,
+  },
+  waxDotPressed: {
+    transform: [{ scale: 0.92 }],
   },
   quote: {
     ...textStyles.quote,
-    marginTop: 10,
     marginBottom: 12,
-  },
-  quoteFoot: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
   },
   night: {
     color: colors.paperDim,
     fontFamily: typography.mono,
     fontSize: 11,
   },
-  evidenceButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minHeight: 36,
-    paddingHorizontal: 12,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: 'rgba(190,111,124,0.34)',
-    backgroundColor: 'rgba(239,188,195,0.2)',
-  },
-  evidenceLabel: {
-    color: colors.roseText,
-    fontFamily: typography.sans,
-    fontWeight: weight.semibold,
+  evidenceError: {
+    ...textStyles.bodySmall,
+    color: colors.ember,
     fontSize: 13,
+    marginTop: 8,
   },
 
   summary: {
@@ -442,7 +474,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: colors.lineStrong,
-    backgroundColor: 'rgba(255,253,249,0.7)',
+    backgroundColor: surfaces.cardSoft,
     gap: 12,
   },
   error: {

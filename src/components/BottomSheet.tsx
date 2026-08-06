@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, TextButton } from '@/components/Buttons';
-import { colors, gradients, motion, radii, textStyles } from '@/theme';
+import { colors, gradients, motion, nativeAnimationDriver, radii, textStyles } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 export type SheetAction = {
@@ -55,13 +55,13 @@ export function BottomSheet({ visible, title, body, actions, footer, children, o
         damping: visible ? 26 : 30,
         stiffness: visible ? 260 : 340,
         mass: 0.9,
-        useNativeDriver: true,
+        useNativeDriver: nativeAnimationDriver,
       }),
       Animated.timing(backdrop, {
         toValue: visible ? 1 : 0,
         duration: visible ? motion.normal : motion.fast,
         easing: motion.easeSoft,
-        useNativeDriver: true,
+        useNativeDriver: nativeAnimationDriver,
       }),
     ]);
 
