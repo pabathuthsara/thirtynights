@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronRight, Play } from 'lucide-react-native';
 
@@ -7,7 +7,7 @@ import { Glow } from '@/components/Sparkle';
 import { completedStickerAssets, embossedStickerAssets, keepsakeDecorations, mysteryEmboss, stickerAssetForNight } from '@/data/keepsakeAssets';
 import { formatDuration, formatLongDate } from '@/domain/format';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
-import { colors, gradients, motion, nativeAnimationDriver, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
+import { colors, gradients, motion, nativeAnimationDriver, radii, surfaces, textStyles, typography, weight } from '@/theme';
 import type { Night } from '@/types';
 
 const GAP = 12;
@@ -20,6 +20,12 @@ const CARD_PAD_BOTTOM = 16;
 const MOUNT_INSET = 22;
 const SPINE_GAP = 16;
 const SPINE_HEIGHT = 8;
+// A horizontal ScrollView clips anything outside its own vertical bounds. The
+// rail therefore needs real room for the cards' shadows; without it, every
+// shadow ended on the same pixel and read as a border across the whole strip.
+const RAIL_PAD_TOP = 10;
+const RAIL_PAD_BOTTOM = 26;
+const RAIL_SHADOW_SPACE = RAIL_PAD_TOP + RAIL_PAD_BOTTOM;
 
 /** Rule + plate number + state + detail line, at each density. Kept in step
  *  with the caption styles below; the card's height is derived from it. */
@@ -79,7 +85,9 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
   // never is: a half-cut "14s" reads as a rendering fault, small artwork reads
   // as a small card.
   const artFromWidth = cardWidth * (dense ? 0.5 : compact ? 0.56 : 0.6);
-  const artFromHeight = maxHeight ? maxHeight - SPINE_GAP - SPINE_HEIGHT - chrome : Number.POSITIVE_INFINITY;
+  const artFromHeight = maxHeight
+    ? maxHeight - SPINE_GAP - SPINE_HEIGHT - RAIL_SHADOW_SPACE - chrome
+    : Number.POSITIVE_INFINITY;
   const artSize = Math.round(Math.max(76, Math.min(artFromWidth, artFromHeight)));
   const cardHeight = chrome + artSize;
   const step = cardWidth + GAP;
@@ -127,7 +135,7 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
           style={styles.rail}
           // `alignItems: center` rather than the default stretch: a card keeps
           // the height it asked for instead of being pulled to the rail's.
-          contentContainerStyle={{ paddingHorizontal: (width - cardWidth) / 2, gap: GAP, alignItems: 'center' }}
+          contentContainerStyle={[styles.railContent, { paddingHorizontal: (width - cardWidth) / 2 }]}
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
             useNativeDriver: nativeAnimationDriver,
           })}
@@ -446,6 +454,13 @@ const styles = StyleSheet.create({
   rail: {
     flexGrow: 0,
     flexShrink: 0,
+    backgroundColor: 'transparent',
+  },
+  railContent: {
+    gap: GAP,
+    alignItems: 'center',
+    paddingTop: RAIL_PAD_TOP,
+    paddingBottom: RAIL_PAD_BOTTOM,
   },
   card: {
     alignItems: 'center',
@@ -459,11 +474,27 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(184,134,53,0.2)',
     backgroundColor: surfaces.card,
     overflow: 'hidden',
-    ...shadows.soft,
+    ...Platform.select({
+      android: { boxShadow: '0 6px 14px rgba(82,48,62,0.15)' },
+      default: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 14,
+      },
+    }),
   },
   cardToday: {
     borderColor: 'rgba(184,134,53,0.46)',
-    ...shadows.floating,
+    ...Platform.select({
+      android: { boxShadow: '0 8px 18px rgba(82,48,62,0.2)' },
+      default: {
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.2,
+        shadowRadius: 18,
+      },
+    }),
   },
   cardRevealed: {
     borderColor: 'rgba(190,111,124,0.3)',
@@ -473,8 +504,14 @@ const styles = StyleSheet.create({
     backgroundColor: surfaces.cardSoft,
     borderColor: colors.line,
     borderStyle: 'dashed',
-    shadowOpacity: 0.04,
-    elevation: 1,
+    ...Platform.select({
+      android: { boxShadow: '0 4px 10px rgba(82,48,62,0.07)' },
+      default: {
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.07,
+        shadowRadius: 10,
+      },
+    }),
   },
   cardPressed: {
     transform: [{ scale: 0.985 }],

@@ -86,6 +86,15 @@ later Android release.
 - 2026-08-03: dependency audit found zero high/critical issues and zero worker issues. Eleven moderate findings remain in Expo build-tooling dependencies through `xcode`/`uuid`; npm's proposed automatic remedy is an unsafe Expo SDK downgrade and was not applied.
 - 2026-08-03: every forward migration executed successfully under `ON_ERROR_STOP` in a disposable PostgreSQL database with minimal Supabase Auth/Storage stubs; the temporary database and roles were removed afterward. This validates SQL/PLpgSQL execution but not hosted Supabase policy behavior.
 - Pending: migration/RLS/Storage/RPC execution because Docker/Podman is not installed or running on this machine; generated database type diff; physical-device/store/provider testing.
+- 2026-08-06: verified the hosted production project (`hnlanyoyktxpllgxgorz`) by
+  probing its REST and Auth APIs. All five migrations are applied and all eight
+  RPCs resolve; anonymous sign-in returns a live session; a new user is
+  auto-provisioned with chapter and night rows; RLS isolates users (a second
+  anonymous user saw only its own chapter); `webhook_events` correctly denies
+  `authenticated`; both storage buckets exist with their MIME and size limits.
+  This closes the long-standing "pending: hosted Supabase policy behaviour" gap.
+  Still unconfigured: the Apple provider, custom SMTP, CAPTCHA, PITR, and all
+  three Edge Function deployments.
 - 2026-08-06: scoped v1 to the App Store only. Removed the Google Sign-In button
   (the provider code in `lib/supabase` is untouched and still exported), made the
   production config require only the RevenueCat key for the platform being built,

@@ -1,228 +1,90 @@
-# Thirty Nights — App Store Launch Guide (iOS only)
+# Thirty Nights — App Store Launch Guide
 
-Last updated: 2026-08-06
+Last updated: 2026-08-06 · Supabase project `hnlanyoyktxpllgxgorz`
 
-This is the authoritative document for the v1 launch. It supersedes
-`docs/PRODUCTION_CHECKLIST.md`, which covered a two-store launch; keep that file
-for when Android comes later.
+The authoritative document for the v1 launch. **iOS only.** Google Sign-In is
+removed from the UI; sign-in is Apple + email link.
+`docs/PRODUCTION_CHECKLIST.md` is kept only for the later Android release.
 
-**Scope decision:** v1 ships to the Apple App Store only. Google Sign-In has
-been removed from the UI. Sign-in is Apple + email link.
-
-Estimated calendar time: **2–3 weeks**, most of it waiting on Apple
-(enrolment, banking, review). Estimated hands-on time: 2–3 days.
+Work top to bottom. Phases 2–6 can overlap; Phase 1 gates almost everything.
 
 ---
 
-## Part 0 — What changed in the code today
+## Where you actually are
 
-Done, no action needed:
+### ✅ Done and verified against the live project (2026-08-06)
 
-| Change | File | Why |
-|---|---|---|
-| Google Sign-In button removed | `src/screens/AuthScreen.tsx` | iOS-only launch; no Google Cloud OAuth client to configure, no consent screen to publish, one fewer provider to test |
-| Production builds no longer demand a Play RevenueCat key | `app.config.ts` | It required `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY`, which would have blocked the iOS build on a credential you have no reason to own yet. Now keyed off `EAS_BUILD_PLATFORM` |
-| Deletion copy says "the App Store", not "Apple or Google" | `src/screens/SettingsScreen.tsx` | Reviewer-facing accuracy |
-| **Apple token revocation implemented** | 3 new files, see below | This was the one guaranteed rejection |
+Verified by probing the REST and Auth APIs directly, not by assumption:
 
-The Google code path in `src/lib/supabase.ts` is untouched and still works. Only
-the button is gone, so re-enabling it for the Android release is a one-line
-change, not a rebuild.
+- **Supabase production project exists** and is reachable
+- **All five migrations applied.** All eight RPCs resolve —
+  `initialize_chapter_schedule`, `reconcile_chapter_state`, `sync_sealed_night`,
+  `attach_night_audio`, `retry_report`, `process_revenuecat_event`,
+  `store_apple_refresh_token`, `get_apple_refresh_token`
+- **Anonymous sign-ins enabled** — live signup returns a session with
+  `is_anonymous: true`
+- **Auto-provisioning works** — a fresh user immediately has chapter and night rows
+- **RLS genuinely isolates users** — a second test user saw only its own chapter
+- **Server-only ledger is sealed** — `webhook_events` denies `authenticated`
+- **Email auth on**, `mailer_autoconfirm: false` (verification required — correct)
+- **Storage buckets created** with the right constraints:
+  `recordings` (10 MB, 5 policies, m4a/mp4/aac/webm/wav) and
+  `report-audio` (50 MB, 1 policy, m4a/mp4/mpeg)
 
-### The Apple revocation work
+### ✅ Code work completed
 
-Guideline 5.1.1(v) requires that deleting an account also revokes the tokens
-Apple issued. Deleting only our own records is a rejection. Apple's revoke
-endpoint needs a refresh token, and a refresh token only exists if the
-single-use authorization code from sign-in was exchanged within minutes — so
-this had to be built in two halves:
+| Change | Where |
+|---|---|
+| Google Sign-In button removed | `src/screens/AuthScreen.tsx` |
+| Production build no longer requires a Play RevenueCat key | `app.config.ts` |
+| Deletion copy says "the App Store" | `src/screens/SettingsScreen.tsx` |
+| Apple token revocation (guideline 5.1.1(v)) | `_shared/apple.ts`, `apple-identity/`, migration `…145157`, `delete-account` |
+| Export compliance declared, iPad disabled, notification icon mask | `app.config.ts`, `assets/app/` |
+| Store prices load without an account | `src/services/commerce.ts` |
+| Worker upstream deadlines + `/healthz` | `worker/src/index.ts` |
 
-```
-sign-in  → device gets authorizationCode
-         → POST /functions/v1/apple-identity
-         → exchange with Apple for refresh_token
-         → store_apple_refresh_token()  →  private.apple_identities
+The app itself — recording, sealing, 90 questions, onboarding, paywall, Gallery,
+Light Map, Settings, export, deletion — is built and passing. What remains is
+infrastructure it talks to, and paperwork.
 
-deletion → get_apple_refresh_token()
-         → POST https://appleid.apple.com/auth/revoke
-         → then, and only then, delete storage + user
-           (the token row goes with it, by cascade)
-```
+### ❌ Two test artifacts to clean up
 
-New files:
-
-- `supabase/functions/_shared/apple.ts` — ES256 client-secret JWT signing via
-  WebCrypto, code exchange, revocation
-- `supabase/functions/apple-identity/index.ts` — captures the token at sign-in
-- `supabase/migrations/20260806120000_apple_token_revocation.sql` — the
-  `private.apple_identities` table plus two service-role-only RPCs
-
-Modified: `supabase/functions/delete-account/index.ts` revokes before deleting;
-`src/lib/supabase.ts` posts the code after both Apple sign-in paths.
-
-**Two properties worth knowing.** Capturing the token is non-fatal — a failed
-exchange never blocks sign-in, it only means that account has nothing to revoke.
-Revoking is fatal — if it fails, deletion aborts while it is still retryable
-rather than leaving an orphan Apple grant behind.
-
-**This code has never run against Apple.** It cannot until the credentials in
-Part 3 exist. Test it on a real device before you submit.
-
-> **Alternative worth considering:** with Google gone, you now offer no
-> third-party login at all, so guideline 4.8 no longer *requires* Sign in with
-> Apple — email link alone would satisfy it, and all of the above becomes
-> unnecessary. I kept Apple because it measurably lifts iOS sign-in conversion
-> and the work is done. If you would rather cut scope, deleting the Apple button
-> removes Part 3 entirely.
+Two anonymous users (and their chapters) were created while verifying the
+backend. Authentication → Users → delete them. Harmless otherwise; Supabase
+purges abandoned anonymous users after 30 days.
 
 ---
 
-## Part 1 — What is actually missing
+## Phase 1 — Today, in this order
 
-Nothing in this table is a code defect. Every one needs an account, a
-credential, a device, or a design asset.
+### Step 1.1 — Rotate the two exposed credentials 🔴
 
-### Backend
+A secret key and the database password were pasted into a chat transcript.
 
-| Gap | Severity | Blocks |
-|---|---|---|
-| No production Supabase project | **Blocker** | Everything |
-| Migrations never run against a hosted project | **Blocker** | Everything |
-| Edge Functions never deployed (3 of them now) | **Blocker** | Purchases, deletion, Apple |
-| Apple provider not enabled in Supabase | **Blocker** | Apple sign-in |
-| No Apple server-to-server credentials | **Blocker** | Account deletion → rejection |
-| No RevenueCat project or SDK key | **Blocker** | Any purchase |
-| IAP products do not exist in App Store Connect | **Blocker** | Any purchase |
-| Report worker not deployed anywhere | **Blocker** | Reports never generate |
-| No OpenAI project or key | **Blocker** | Reports never generate |
-| Custom SMTP not configured | **High** | Email links silently rate-limit in beta |
-| No error reporting (Sentry) | **High** | Crashes are invisible |
-| PITR / backups not enabled | **High** | Data loss is unrecoverable |
-| No alerting on failed report jobs | **Medium** | A dead worker looks like "reports are slow" |
-| No product analytics | **Medium** | Onboarding and paywall cannot be evaluated |
+1. Dashboard → Project Settings → **API Keys** → revoke `sb_secret_…` → generate new
+2. Dashboard → Project Settings → **Database** → Reset database password
+3. Choose a password with **no** `#`, `@`, `/`, `:` or `?` — those break URI
+   parsing and will silently fail in the worker's `DATABASE_URL`
 
-### Frontend
+The publishable key and project URL are safe and need no action; they ship
+inside the app by design.
 
-| Gap | Severity | Blocks |
-|---|---|---|
-| Legal URLs are placeholders | **Blocker** | Production build refuses to compile, by design |
-| No store screenshots at required sizes | **Blocker** | Submission |
-| No App Store description, keywords, category | **Blocker** | Submission |
-| App Privacy nutrition labels not filled | **Blocker** | Submission |
-| Never run on a physical iPhone | **Blocker** | Unknown unknowns |
-| Age rating questionnaire not answered | **Blocker** | Submission |
-| No large-text / Reduce Motion pass | **Medium** | Accessibility rejections, bad reviews |
-| `android/` folder still on disk (~1 GB) | **Low** | Nothing — gitignored. Disk hygiene only |
+### Step 1.2 — Start Apple Developer enrolment 🔴
 
-The app itself — recording, sealing, the 90 questions, onboarding, paywall,
-Gallery, Light Map, Settings, export, deletion — is built and passing its
-tests. What is missing is the infrastructure it talks to and the paperwork
-around it.
+This is the long pole. It gates Sign in with Apple, in-app purchases,
+RevenueCat, TestFlight, and any device build with entitlements.
 
----
+1. developer.apple.com → Enroll → **$99/year**
+2. Individual is fine. Organization needs a D-U-N-S number and takes longer.
+3. Once approved: App Store Connect → **Agreements, Tax, and Banking** → accept
+   the Paid Applications agreement, complete tax and banking forms
 
-## Part 2 — Apple accounts (start today, it gates everything)
+> **Purchases cannot be tested in sandbox until Agreements shows Active.** This
+> is the step people lose a week to. Start it the day you are approved.
 
-Apple's enrolment and banking steps have multi-day waits. Start them before
-touching anything technical.
+### Step 1.3 — Add the auth redirect URLs
 
-**2.1** Enrol in the Apple Developer Program — $99/year, developer.apple.com.
-Individual is fine; an Organization needs a D-U-N-S number and takes longer.
-
-**2.2** App Store Connect → Agreements, Tax, and Banking. Accept the Paid
-Applications agreement and complete tax + banking forms. **Purchases cannot be
-tested in sandbox until this shows Active.** This is the step people forget and
-then lose a week to.
-
-**2.3** Create the app record: App Store Connect → Apps → New App.
-- Platform: iOS
-- Bundle ID: `com.thirtynights.app` (register it first at developer.apple.com →
-  Identifiers, with **Sign in with Apple** and **In-App Purchase** capabilities
-  enabled)
-- SKU: anything, e.g. `thirtynights-ios-v1`
-- Primary language: English
-
-**2.4** Note two values and put them in `eas.json` → `submit.production.ios`,
-replacing the placeholders:
-- `ascAppId` — the numeric Apple ID under App Information
-- `appleTeamId` — developer.apple.com → Membership
-
-Neither is secret. The App Store Connect API key *is* — that goes into EAS
-credentials, never into the repo.
-
-**2.5** Create an Expo/EAS account, link the project, and confirm billing at
-expo.dev.
-
----
-
-## Part 3 — Apple Sign-In credentials
-
-**3.1** developer.apple.com → Identifiers → your App ID → confirm **Sign in with
-Apple** is enabled.
-
-**3.2** Keys → **+** → name it "Thirty Nights Sign in with Apple" → tick Sign in
-with Apple → configure it against your primary App ID → Continue → Register.
-
-**3.3** Download the `.p8` file. **You get exactly one download.** Store it in a
-password manager. Note the **Key ID** shown next to it.
-
-**3.4** Note your **Team ID** (Membership page).
-
-**3.5** Supabase → Authentication → Providers → Apple → Enable. For native iOS
-sign-in you only need the bundle ID in the authorized client IDs field:
-`com.thirtynights.app`. No Services ID, no secret key here — the native flow
-sends an identity token that Supabase validates directly.
-
-**3.6** Set the function secrets (Part 4 covers the Supabase project itself):
-
-```bash
-npx supabase secrets set APPLE_TEAM_ID=<your team id> APPLE_KEY_ID=<the key id from 3.3> APPLE_CLIENT_ID=com.thirtynights.app
-```
-
-For `APPLE_PRIVATE_KEY`, use the dashboard rather than the CLI: **Project
-Settings → Edge Functions → Secrets → Add new secret**, and paste the entire
-`.p8` file including the `-----BEGIN PRIVATE KEY-----` and `-----END-----`
-lines. Multi-line values through a shell are where this goes wrong. The helper
-accepts both real newlines and the literal `\n` some secret stores substitute,
-so either survives.
-
-`APPLE_CLIENT_ID` is the **bundle identifier**, not a Services ID. Services IDs
-belong to the web redirect flow; using one here makes Apple answer
-`invalid_client`, and that error surfaces only at deletion time.
-
-Paste the `.p8` contents straight into the secret manager. Never into chat, the
-repo, `.env`, or a screenshot.
-
----
-
-## Part 4 — Supabase
-
-**4.1** Create the production project. Pick the region closest to your users.
-Note the project ref.
-
-**4.2** Run all five migrations:
-
-```bash
-npx supabase link --project-ref <ref>
-npx supabase db push
-```
-
-**4.3** Verify RLS behaves, not just that the SQL ran. In the SQL editor:
-
-```sql
-set role authenticated;
-set request.jwt.claims to '{"sub":"<some other user uuid>"}';
-select * from public.nights;   -- must return zero rows
-```
-
-**4.4** Regenerate types and diff:
-
-```bash
-npx supabase gen types typescript --project-id <ref> > /tmp/types.ts
-diff /tmp/types.ts src/lib/database.types.ts
-```
-
-**4.5** Authentication → URL Configuration → Redirect URLs:
+Dashboard → Authentication → **URL Configuration** → Redirect URLs, add all three:
 
 ```
 thirtynights://auth/callback
@@ -230,162 +92,250 @@ thirtynights-staging://auth/callback
 thirtynights-dev://auth/callback
 ```
 
-**4.6** Authentication → Providers → enable **Anonymous sign-ins** and **Manual
-linking**. The entire local-first model depends on both; without them the app
-cannot start.
+### Step 1.4 — Confirm Manual linking is on
 
-**4.7** Custom SMTP. The built-in sender allows a handful of mails per hour and
-then fails silently — which in beta looks exactly like "the email link is
-broken". Resend, Postmark, or SES all work.
+Dashboard → Authentication → Settings → **Manual linking** → enabled.
 
-**4.8** Enable CAPTCHA and tighten auth rate limits.
+The anonymous-to-Apple upgrade calls `linkIdentity()`, which fails without it.
+Anonymous sign-in being on is not sufficient.
 
-**4.9** Enable Point-in-Time Recovery. This app holds the only copy of things
-people cannot re-record.
+---
 
-**4.10** Deploy all three Edge Functions:
+## Phase 2 — Finish Supabase hardening
 
-```bash
+### Step 2.1 — Custom SMTP
+
+Dashboard → Project Settings → Authentication → SMTP Settings.
+
+The built-in sender allows a few mails per hour then fails **silently**, which
+in beta is indistinguishable from "the email link is broken". Resend, Postmark
+or SES all work.
+
+### Step 2.2 — CAPTCHA and rate limits
+
+Authentication → Settings → enable CAPTCHA (hCaptcha or Turnstile) and tighten
+the auth rate limits.
+
+### Step 2.3 — Point-in-Time Recovery
+
+Project Settings → Database → enable PITR. This app holds the only copy of
+things people cannot re-record.
+
+### Step 2.4 — Deploy the three Edge Functions
+
+In your own terminal (this needs a TTY):
+
+```powershell
+cd C:\Users\pabat\OneDrive\Documents\thirtynights\thirtynights
+$env:SUPABASE_ACCESS_TOKEN = "sbp_..."   # supabase.com/dashboard/account/tokens
 npx supabase functions deploy revenuecat-webhook
 npx supabase functions deploy delete-account
 npx supabase functions deploy apple-identity
 ```
 
-**4.11** Remaining function secrets:
+Never paste that access token into a chat — it is account-wide.
 
-```bash
-npx supabase secrets set \
-  REVENUECAT_WEBHOOK_AUTH=<random 32+ chars, you invent this> \
-  REVENUECAT_WEBHOOK_HMAC_SECRET=<from RevenueCat, Part 5> \
-  REVENUECAT_SECRET_API_KEY=<from RevenueCat, Part 5>
+### Step 2.5 — Verify the deploys
+
+```powershell
+npx supabase functions list
+```
+
+All three should show as deployed. `apple-identity` will return
+`{"stored":false,"reason":"not_configured"}` until Phase 3 — that is correct
+behaviour, not an error.
+
+---
+
+## Phase 3 — Apple credentials (after enrolment approves)
+
+### Step 3.1 — Register the App ID
+
+developer.apple.com → Certificates, Identifiers & Profiles → **Identifiers** →
+**+** → App IDs → App.
+
+- Bundle ID: `com.thirtynights.app` (explicit, not wildcard)
+- Capabilities: tick **Sign in with Apple** and **In-App Purchase**
+
+### Step 3.2 — Create the Sign in with Apple key
+
+developer.apple.com → **Keys** → **+**
+
+- Name: `Thirty Nights Sign in with Apple`
+- Tick **Sign in with Apple**, Configure → select your primary App ID
+- Continue → Register → **Download the `.p8`**
+
+> **You get exactly one download.** Put it in a password manager immediately.
+> Note the **Key ID** shown beside it.
+
+### Step 3.3 — Note your Team ID
+
+developer.apple.com → Membership → Team ID.
+
+### Step 3.4 — Enable the Apple provider in Supabase
+
+Dashboard → Authentication → Providers → **Apple** → Enable.
+
+Authorized Client IDs: `com.thirtynights.app`
+
+That is all the native flow needs. **No Services ID, no secret key here** — the
+device sends an identity token that Supabase validates directly.
+
+### Step 3.5 — Set the Apple function secrets
+
+```powershell
+npx supabase secrets set APPLE_TEAM_ID=<team id> APPLE_KEY_ID=<key id> APPLE_CLIENT_ID=com.thirtynights.app
+```
+
+For the private key, use the **dashboard**, not the CLI: Project Settings → Edge
+Functions → Secrets → Add new secret → name `APPLE_PRIVATE_KEY`, and paste the
+entire `.p8` including the `-----BEGIN PRIVATE KEY-----` and `-----END-----`
+lines. Multi-line values through a shell are where this goes wrong.
+
+> `APPLE_CLIENT_ID` is the **bundle identifier**, not a Services ID. Services IDs
+> belong to the web redirect flow; using one makes Apple answer `invalid_client`,
+> and that error only surfaces at deletion time.
+
+### Step 3.6 — Redeploy the functions that read those secrets
+
+```powershell
+npx supabase functions deploy apple-identity
+npx supabase functions deploy delete-account
 ```
 
 ---
 
-## Part 5 — RevenueCat and in-app purchases
+## Phase 4 — Money
 
-You have not signed up for RevenueCat. You do not need to remember doing so —
-it is an architecture choice baked into the code, not an account you forgot.
-It is free below $2,500/month of tracked revenue. See the end of Part 5 if you
-would rather not use it.
+### Step 4.1 — Create the two products in App Store Connect
 
-**5.1** Create the two products in App Store Connect → your app → In-App
-Purchases. Both must be **Non-Consumable** — not subscriptions. The paywall
-says "nothing renews, ever", and a reviewer will check that the product type
-matches the claim.
+Your app → Monetization → **In-App Purchases** → **+**
 
-| Product ID | Reference name | What it grants |
+| Product ID | Reference name | Type |
 |---|---|---|
-| `com.thirtynights.nights30` | Thirty Nights | Extends the chapter to night 30 |
-| `com.thirtynights.nights90` | Ninety Nights | Extends to night 90, reports at 30/60/90 |
+| `com.thirtynights.nights30` | Thirty Nights | **Non-Consumable** |
+| `com.thirtynights.nights90` | Ninety Nights | **Non-Consumable** |
 
-Set prices and territories. Each product needs a screenshot and a review note
-before it can be submitted — attach a paywall screenshot once you have one from
-Part 8.
+> Non-consumable, **not** subscriptions. The paywall says "nothing renews, ever"
+> and a reviewer will check the product type matches the claim.
 
-**5.2** Sign up at revenuecat.com. Create a project, add an **iOS app** with
-bundle ID `com.thirtynights.app`.
+Set prices and territories. Each product needs a screenshot and review note
+before submission — attach a paywall screenshot from Phase 7.
 
-**5.3** Connect App Store credentials: upload an App Store Connect API key
-(In-App Purchase role) so RevenueCat can validate receipts.
+### Step 4.2 — RevenueCat project
 
-**5.4** Import both products, then create an **Offering** containing both
-packages.
+You have not signed up, and you do not need to remember doing so — it is an
+architecture choice baked into the code, not an account you forgot. Free below
+$2,500/month tracked revenue.
 
-**5.5** Copy the **public** iOS SDK key (`appl_…`). This one is safe in the app
-bundle. Also generate a **secret** API key for the deletion function — that one
-is server-only and goes in 4.11.
+1. revenuecat.com → new project
+2. Add an **iOS app**, bundle ID `com.thirtynights.app`
+3. Upload an App Store Connect API key (In-App Purchase role) so RevenueCat can
+   validate receipts
 
-**5.6** Integrations → Webhooks → point at:
-`https://<ref>.supabase.co/functions/v1/revenuecat-webhook`
-Enable HMAC signing, and set the Authorization header to the same random string
-you used for `REVENUECAT_WEBHOOK_AUTH`.
+### Step 4.3 — Import products and create an offering
 
-**5.7** Sandbox test on a real device with a Sandbox Apple ID (App Store Connect
-→ Users and Access → Sandbox Testers):
-- Buy 30 nights → access unlocks **only after the server grant lands**. The
-  client deliberately sits at "verifying" until the webhook writes the grant.
-  If it unlocks instantly, the webhook is not wired.
-- Delete the app, reinstall, sign in, tap Restore → access returns
-- Refund via sandbox → access is withdrawn
+Import both product IDs, then create an **Offering** containing both packages.
 
-> **If you would rather skip RevenueCat:** you would own App Store Server API
-> receipt validation, App Store Server Notifications V2, refund handling, and
-> cross-device restore yourself, and you would rewrite `commerce.ts`, the
-> webhook function, and the grant RPC. Realistically a week, in the one area
-> where a bug means either giving away paid content or charging for nothing.
+### Step 4.4 — Collect two keys
+
+- **Public iOS SDK key** (`appl_…`) — safe in the app bundle, goes in EAS (Phase 6)
+- **Secret API key** — server-only, goes in Supabase secrets (next step)
+
+### Step 4.5 — Webhook
+
+RevenueCat → Integrations → Webhooks:
+
+- URL: `https://hnlanyoyktxpllgxgorz.supabase.co/functions/v1/revenuecat-webhook`
+- Enable **HMAC signing**, copy the secret
+- Set an Authorization header to a random 32+ character string you invent
+
+Then:
+
+```powershell
+npx supabase secrets set REVENUECAT_WEBHOOK_AUTH=<your random string> REVENUECAT_WEBHOOK_HMAC_SECRET=<from RevenueCat> REVENUECAT_SECRET_API_KEY=<secret key>
+npx supabase functions deploy revenuecat-webhook
+```
 
 ---
 
-## Part 6 — The report worker
+## Phase 5 — The AI worker
 
 Without this, people record seven nights and no report ever arrives.
 
-**6.1** Create a **dedicated** OpenAI project with its own key and a hard spend
-limit. Not your personal key.
+### Step 5.1 — OpenAI project
 
-**6.2** Confirm both model IDs resolve on your account:
+A **dedicated** project with its own key and a hard spend limit. Not your
+personal key — you want to be able to revoke it without breaking anything else.
+
+### Step 5.2 — Verify both model IDs resolve
 
 ```bash
 curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
 
-- `gpt-4o-transcribe-diarize` — correct. The worker relies on its
-  `response_format: diarized_json` and per-segment timestamps, which is what the
-  evidence clips are cut from. Do not substitute a plain Whisper model; the
-  report validator rejects evidence it cannot locate in a timestamped segment.
-- `gpt-5.6` — **verify this one.** GPT-5.6 ships as tiers (Sol / Terra / Luna)
-  and the bare string may not be a callable ID. A wrong ID surfaces as
-  `report_analysis_404`: the worker keeps polling, reports never arrive, and it
-  reads as slowness rather than an outage. This job is strict-schema extraction
-  over transcripts, not open-ended reasoning — the mid or cheap tier is the
-  right default, not the flagship.
+- `gpt-4o-transcribe-diarize` — correct as-is. The worker depends on its
+  `diarized_json` format and per-segment timestamps; the evidence clips are cut
+  from them. Do not substitute plain Whisper — the validator rejects any quote
+  it cannot locate in a timestamped segment.
+- `gpt-5.6` — **verify.** GPT-5.6 ships as tiers (Sol / Terra / Luna) and the
+  bare string may not be callable. A wrong ID surfaces as `report_analysis_404`:
+  the worker keeps polling, reports never arrive, and it reads as slowness. This
+  job is strict-schema extraction, not open-ended reasoning — pick the mid or
+  cheap tier, not the flagship.
 
-There is **no text-to-speech dependency**. "Report audio" is the user's own
-voice, cut with ffmpeg from their recordings. Only the two endpoints above are
-called.
+There is **no text-to-speech dependency.** "Report audio" is the user's own
+voice, cut with ffmpeg.
 
-### What it will cost you
-
-Per user, for a full chapter, at August 2026 list prices and assuming a
-2-minute average recording (the app allows 10–300s):
+**Expected cost per user, full chapter, 2-minute average recording:**
 
 | | Transcription | Reports | Total |
 |---|---|---|---|
-| 30-night chapter | ~$0.36 | ~$0.05 | **~$0.41** |
-| 90-night chapter | ~$1.08 | ~$0.21 | **~$1.30** |
+| 30-night | ~$0.36 | ~$0.05 | **~$0.41** |
+| 90-night | ~$1.08 | ~$0.21 | **~$1.30** |
 
-Transcription dominates and scales linearly with how long people actually talk;
-if they use the full 300 seconds, multiply it by 2.5. Reports are cheap because
-the input is text by then. Both are comfortably inside any sensible price for
-the IAP — but set the spend limit anyway, because a retry loop against a
-misconfigured model is the failure mode that costs money.
+### Step 5.3 — Deploy the container
 
-**6.3** Deploy the container (`worker/Dockerfile`). Fly.io, Railway, Render, and
-Cloud Run all work. It is a polling worker, not a web service — do not put it
-behind a scale-to-zero configuration that stops it polling.
+`worker/Dockerfile`. Fly.io, Railway, Render or Cloud Run all work.
 
-**6.4** Secrets go in the **host** secret manager, never in the image:
+> It is a **polling worker, not a web service.** Do not put it behind
+> scale-to-zero — it stops polling and reports quietly stop arriving.
+
+### Step 5.4 — Connection string
+
+Use the **Supavisor session pooler** string from Project Settings → Database,
+not the direct `db.<ref>.supabase.co:5432` one — direct connections are
+IPv6-only without the IPv4 add-on, and many hosts have no IPv6 outbound.
+
+**Session** mode, not transaction: the worker uses `FOR UPDATE SKIP LOCKED`
+job leasing.
+
+Remember to URL-encode any special characters in the password.
+
+### Step 5.5 — Host secrets
+
+In the **host** secret manager, never in the image:
 `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`.
 
-**6.5** Point the host's liveness probe at `GET /healthz`. It reports `degraded`
-when the loop has stalled, which is what turns a silent death into a restart.
+### Step 5.6 — Liveness probe
 
-**6.6** Set an alert on:
+Point it at `GET /healthz`. It reports `degraded` when the loop stalls, which is
+what turns a silent death into a restart.
+
+### Step 5.7 — Alert on stuck jobs
 
 ```sql
 select count(*) from private.report_jobs where status = 'failed';
 ```
 
-**6.7** End-to-end test: seal 7 nights (you can shift device dates), confirm the
-mini report generates, evidence clips render, and audio plays back in the app.
-
 ---
 
-## Part 7 — Legal pages and privacy declarations
+## Phase 6 — Legal pages and configuration
 
-**7.1** Publish four HTTPS pages. The production build **refuses to compile**
-with placeholder or non-HTTPS values — that is deliberate, not a bug:
+### Step 6.1 — Publish four HTTPS pages
+
+The production build **refuses to compile** with placeholder or non-HTTPS
+values. That is deliberate.
 
 | Env var | Page |
 |---|---|
@@ -394,22 +344,20 @@ with placeholder or non-HTTPS values — that is deliberate, not a bug:
 | `EXPO_PUBLIC_SUPPORT_URL` | Support / contact |
 | `EXPO_PUBLIC_DELETE_ACCOUNT_URL` | Web account deletion |
 
-**7.2** The privacy policy must state explicitly:
-- what is collected: voice recordings, email, purchase history, device timezone
-- that **recordings are sent to a third-party model provider** for transcription
-  and reflection — this is the disclosure most likely to be missing
-- retention period
-- how to request deletion
+### Step 6.2 — The privacy policy must say, explicitly
 
-**7.3** App Store Connect → App Privacy. Declare at minimum: Audio Data,
-Contact Info (email), Purchases, Identifiers. Mark what is linked to identity
-and what is used for tracking (nothing should be, unless you add analytics).
+- What is collected: voice recordings, email, purchase history, device timezone
+- **That recordings are sent to a third-party model provider** for transcription
+  and reflection — this is the disclosure most likely to be missing, and audio
+  is sensitive enough that it gets read
+- Retention period
+- How to request deletion
 
-**7.4** Set every EAS production variable:
+### Step 6.3 — Set every EAS production variable
 
-```bash
+```powershell
 eas env:create --environment production --name EXPO_PUBLIC_APP_ENV --value production
-eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_URL --value https://<ref>.supabase.co
+eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_URL --value https://hnlanyoyktxpllgxgorz.supabase.co
 eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY --value sb_publishable_...
 eas env:create --environment production --name EXPO_PUBLIC_REVENUECAT_IOS_KEY --value appl_...
 eas env:create --environment production --name EXPO_PUBLIC_NIGHTS_30_PRODUCT_ID --value com.thirtynights.nights30
@@ -422,71 +370,59 @@ eas env:create --environment production --name EXPO_PUBLIC_DELETE_ACCOUNT_URL --
 
 The Android RevenueCat key is no longer required.
 
----
+### Step 6.4 — Fill in `eas.json`
 
-## Part 8 — Store listing
+Replace the two placeholders in `submit.production.ios`:
 
-**8.1** Screenshots. Capture on a 6.9" simulator (iPhone 17 Pro Max or
-equivalent) at **1320 × 2868**, 3–10 of them. App Store Connect scales that set
-down for smaller devices, so one set is enough; confirm in the upload UI, since
-Apple adjusts required sizes periodically. `screenshots/` currently holds
-emulator dev captures — not usable.
+- `ascAppId` — the numeric Apple ID from App Store Connect → App Information
+- `appleTeamId` — developer.apple.com → Membership
 
-Suggested order, mirroring the product's argument: the night card → recording →
-the sealed keepsake → Gallery → Light Map → a report.
-
-**8.2** Description, subtitle, keywords, promotional text.
-
-**8.3** Category: Health & Fitness, or Lifestyle. Health & Fitness draws
-slightly more scrutiny on wellbeing claims — the report copy is already
-deliberately non-diagnostic, keep it that way in the listing.
-
-**8.4** Age rating questionnaire.
-
-**8.5** App Review notes. Write these carefully; they prevent the most likely
-false rejection:
-
-> Thirty Nights asks one question per night and cannot be advanced faster —
-> night 2 will not open until the following evening. This is the product, not a
-> bug. To review the full flow please use the demo account below, which is
-> pre-seeded with completed nights and a generated report.
->
-> Privacy, Terms and Delete Account are reachable from Settings without signing
-> in. Purchases are non-consumable and one-time; nothing renews. Restore
-> Purchases is on the paywall and in Settings.
-
-Provide a demo account with pre-seeded nights. A reviewer who opens the app,
-records one night, and finds they cannot continue will reject it as
-non-functional.
+Neither is secret. The App Store Connect API key **is**, and belongs in EAS
+credentials, not the repo.
 
 ---
 
-## Part 9 — Build, test, submit
+## Phase 7 — Build and TestFlight
 
-**9.1** Local gates:
+### Step 7.1 — Local gates
 
-```bash
-npm run check        # typecheck + tests + worker + web export
-npm run doctor       # expect 20/20
+```powershell
+npm run check          # typecheck + tests + worker + web export
+npm run doctor         # expect 20/20
 npm run audit:release
 ```
 
-**9.2** Build:
+### Step 7.2 — Build
 
-```bash
+```powershell
 eas build --platform ios --profile production
 ```
 
-First run will offer to generate signing credentials — let EAS manage them
-unless you have a reason not to.
+First run offers to generate signing credentials — let EAS manage them unless
+you have a reason not to.
 
-**9.3** Submit to TestFlight:
+### Step 7.3 — Submit to TestFlight
 
-```bash
+```powershell
 eas submit --platform ios --profile production
 ```
 
-**9.4** On a **physical iPhone**, run the whole journey:
+### Step 7.4 — Capture screenshots
+
+From the TestFlight build on a 6.9" device or simulator, at **1320 × 2868**,
+3–10 images. App Store Connect scales one set down for smaller devices; confirm
+required sizes in the upload UI, as Apple adjusts them periodically.
+
+Suggested order, mirroring the product's argument: night card → recording →
+sealed keepsake → Gallery → Light Map → a report.
+
+`screenshots/` currently holds emulator dev captures — not usable.
+
+---
+
+## Phase 8 — The device test that decides everything
+
+On a **physical iPhone**, not a simulator:
 
 - [ ] Onboarding → intentions → hour → notification permission → plan screen
 - [ ] Notification actually fires at the chosen hour
@@ -494,44 +430,92 @@ eas submit --platform ios --profile production
 - [ ] Force-quit mid-recording; nothing corrupts
 - [ ] Airplane mode: record offline, confirm it syncs on reconnect
 - [ ] Seven nights → mini report generates and plays
-- [ ] Paywall shows **real localized prices** without an account
-- [ ] Sandbox purchase → access unlocks only after server verification
+- [ ] Paywall shows **real localized prices without an account**
+- [ ] Sandbox purchase → access unlocks **only after** server verification
+      (if it unlocks instantly, the webhook is not wired)
 - [ ] Restore on a second device
-- [ ] **Sign in with Apple → delete account → confirm the app disappears from
-      Settings → Apple ID → Sign in with Apple.** This is the revocation check.
-      If it is still listed, revocation did not work and you will be rejected.
-- [ ] Privacy, Terms, Delete Account all reachable without an account
+- [ ] 🔴 **Sign in with Apple → delete account → check Settings → Apple ID →
+      Sign in with Apple.** The app must be **gone** from that list. If it is
+      still there, revocation failed and you will be rejected.
+- [ ] Privacy, Terms, Delete Account reachable **without** an account
 - [ ] Maximum system font size — nothing clips
 - [ ] Reduce Motion enabled — nothing breaks
 
-**9.5** Submit for review. Expect 24–48 hours; first submissions sometimes
-longer.
+The Apple revocation path has never run against Apple's servers — it could not,
+until Phase 3 existed. This checklist item is the only real test of it.
 
 ---
 
-## Part 10 — Most likely rejection reasons, ranked
+## Phase 9 — Store listing and submit
 
-1. **Apple token not revoked on deletion** (5.1.1(v)) — now implemented, but
-   untested against Apple. Verify it with the Settings check in 9.4.
-2. **Reviewer cannot progress past night 1** and reports the app as
-   non-functional. Mitigated entirely by the demo account in 8.5.
-3. **Privacy policy does not disclose third-party model processing** of voice
-   recordings. Audio is sensitive; this gets read.
+### Step 9.1 — Listing
+
+Description, subtitle, keywords, promotional text.
+Category: Health & Fitness or Lifestyle. Health & Fitness draws more scrutiny on
+wellbeing claims — the report copy is deliberately non-diagnostic, keep the
+listing that way too.
+
+### Step 9.2 — App Privacy labels
+
+App Store Connect → App Privacy. Declare at minimum: **Audio Data**, **Contact
+Info** (email), **Purchases**, **Identifiers**. Mark what is linked to identity;
+nothing should be marked as tracking unless you add analytics.
+
+### Step 9.3 — Age rating questionnaire
+
+### Step 9.4 — App Review notes
+
+Write these carefully — they prevent the most likely false rejection:
+
+> Thirty Nights asks one question per night and cannot be advanced faster —
+> night 2 will not open until the following evening. This is the product, not a
+> bug. Please use the demo account below, pre-seeded with completed nights and a
+> generated report, to review the full flow.
+>
+> Privacy, Terms and Delete Account are reachable from Settings without signing
+> in. Purchases are non-consumable and one-time; nothing renews. Restore
+> Purchases is on the paywall and in Settings.
+
+**Provide a demo account with pre-seeded nights.** A reviewer who records one
+night and finds they cannot continue will reject the app as non-functional.
+
+### Step 9.5 — Submit
+
+Expect 24–48 hours. First submissions sometimes longer.
+
+---
+
+## Most likely rejection reasons, ranked
+
+1. **Apple token not revoked on deletion** (5.1.1(v)) — implemented, untested.
+   Phase 8 is the check.
+2. **Reviewer cannot get past night 1** — fully mitigated by the demo account.
+3. **Privacy policy omits third-party model processing** of voice recordings.
 4. **IAP configured as subscriptions**, contradicting "nothing renews".
 5. **Purchases fail in review** because Agreements/Tax/Banking is not Active.
-6. **Missing or non-functional Restore.** Present in both places — just confirm
-   it works against a real sandbox purchase.
+6. **Missing or broken Restore** — present in both places, just verify it.
+
+---
+
+## Still unwired, deliberately
+
+- **Sentry** — `ErrorBoundary` currently `console.error`s into the void in
+  production. Give me a DSN and I will wire it and scrub recording paths and
+  email from events.
+- **Product analytics** — you have zero measurement, so the new onboarding and
+  paywall cannot be evaluated. Whatever you choose must be declared in Step 9.2.
+
+Neither blocks submission. Both make the first month afterwards much less blind.
 
 ---
 
 ## Appendix — Android, later
 
-`docs/PRODUCTION_CHECKLIST.md` retains the Play-side steps. To re-enable Google
-Sign-In you need: a Google Cloud OAuth **Web** client, the Supabase callback as
+`docs/PRODUCTION_CHECKLIST.md` retains the Play-side steps. To restore Google
+Sign-In you need a Google Cloud OAuth **Web** client, the Supabase callback as
 an authorized redirect URI, a published consent screen, the provider enabled in
-Supabase, and the button restored in `AuthScreen.tsx` (`continueWithApple` shows
-the shape; `linkOAuthIdentity('google')` and `signInWithOAuthProvider('google')`
-are still exported and working).
+Supabase, and the button back in `AuthScreen.tsx` — `linkOAuthIdentity('google')`
+and `signInWithOAuthProvider('google')` are still exported and working.
 
-Also required for Play: the Data safety form, a 1024×500 feature graphic, a
-512×512 icon, and the Android RevenueCat key in EAS.
+Also required: the Data safety form, a 1024×500 feature graphic, a 512×512 icon,
+and `EXPO_PUBLIC_REVENUECAT_ANDROID_KEY` in EAS.
