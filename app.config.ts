@@ -17,7 +17,17 @@ function identifiersForEnvironment(environment: AppEnvironment) {
   const label = environment === 'staging' ? 'Staging' : 'Dev';
   return {
     appName: `Thirty Nights ${label}`,
-    bundleIdentifier: `com.thirtynights.app.${suffix}`,
+    // Bundle identifiers are globally unique across all Apple developer teams,
+    // and `com.thirtynights.app.dev` is already registered to someone else — a
+    // free Personal Team cannot claim it, so Xcode refuses to make a profile.
+    // EXPO_DEV_BUNDLE_ID overrides it locally for side-loading. It deliberately
+    // does not apply to staging or production, whose identifiers are fixed by
+    // the App Store record.
+    bundleIdentifier: environment === 'development' && process.env.EXPO_DEV_BUNDLE_ID
+      ? process.env.EXPO_DEV_BUNDLE_ID
+      : `com.thirtynights.app.${suffix}`,
+    // The deep-link scheme is unchanged: it is matched by Supabase's redirect
+    // allowlist, not by Apple, so it must stay `thirtynights-dev`.
     scheme: `thirtynights-${suffix}`,
   };
 }
@@ -45,7 +55,25 @@ function requiredStoreKeys() {
     : (['EXPO_PUBLIC_REVENUECAT_IOS_KEY'] as const);
 }
 
+/**
+ * A free Apple ID signs through a Personal Team, which cannot provision the
+ * Sign in with Apple or Push Notifications entitlements — Xcode refuses the
+ * build outright rather than dropping them. Setting EXPO_FREE_PROVISIONING=1
+ * in a local .env omits both so the app can be side-loaded onto a device for
+ * UI and recording testing before Developer Program enrolment completes.
+ *
+ * Local reminders are unaffected: they are app-owned local notifications and
+ * never needed `aps-environment`. Apple sign-in degrades rather than crashes,
+ * because `lib/supabase` gates every call on `isAvailableAsync()`.
+ */
+function usesFreeProvisioning() {
+  return process.env.EXPO_FREE_PROVISIONING === '1';
+}
+
 function assertProductionConfiguration() {
+  if (usesFreeProvisioning()) {
+    throw new Error('EXPO_FREE_PROVISIONING is a local development-signing escape hatch and must never be set for a production build.');
+  }
   const required = [
     'EXPO_PUBLIC_SUPABASE_URL',
     'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
@@ -91,7 +119,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // declaring tablet support means App Review runs the whole thing on an
       // iPad and rejects what it finds there.
       supportsTablet: false,
-      usesAppleSignIn: true,
+      usesAppleSignIn: !usesFreeProvisioning(),
       bundleIdentifier: identifiers.bundleIdentifier,
       infoPlist: {
         UIBackgroundModes: [],
@@ -112,6 +140,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     web: { bundler: 'metro', output: 'single', favicon: './assets/app/favicon.png' },
     plugins: [
+      // Deliberately first: mods run in reverse registration order, so the
+      // earliest-listed plugin is the last to touch the entitlements file.
+      // Listing this last made it run before anything had written them.
+      ...(usesFreeProvisioning() ? ['./plugins/with-free-provisioning'] : []),
       // Without this the app cold-started on a white splash and then flashed
       // into the cream UI.
       ['expo-splash-screen', {
