@@ -134,6 +134,8 @@ type SettingsProps = {
   onPreview: (mode: 'empty' | 'partial' | 'complete') => void;
   onPopupCatalog: () => void;
   onPreviewSealing: () => void;
+  onDevRecordings: () => void;
+  onAdvanceNight: () => void;
   onDelete: (remote: boolean) => Promise<void>;
 };
 
@@ -281,6 +283,17 @@ export function SettingsScreen(props: SettingsProps) {
               <Button variant="outline" onPress={props.onPopupCatalog}>Supporting state catalog</Button>
               <Button variant="outline" onPress={props.onPreviewSealing}>Sealing ceremony</Button>
             </View>
+
+            <Text style={styles.sectionLabel}>DEVELOPER TOOLS</Text>
+            <View style={styles.previewGroup}>
+              <Button variant="outline" onPress={props.onDevRecordings}>All recordings · play any take</Button>
+              <Button variant="outline" onPress={props.onAdvanceNight}>Advance one night</Button>
+              <Text style={styles.devNote}>
+                Advancing pulls the whole schedule back a day, so the next night unlocks now.
+                Seal tonight first — an unrecorded night whose date has passed becomes missed,
+                exactly as it would overnight.
+              </Text>
+            </View>
           </Stagger>
         ) : null}
 
@@ -344,6 +357,7 @@ export function SettingsScreen(props: SettingsProps) {
 
 const styles = StyleSheet.create({
   title: { ...textStyles.title, marginBottom: 8 },
+  devNote: { ...textStyles.caption, marginTop: 2, lineHeight: 17 },
   sectionLabel: { ...textStyles.eyebrow, fontSize: 11, marginTop: 26, marginBottom: 10 },
   group: {
     borderWidth: 1,

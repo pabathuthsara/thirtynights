@@ -5,6 +5,7 @@ import { ChevronRight, Play } from 'lucide-react-native';
 
 import { Glow } from '@/components/Sparkle';
 import { completedStickerAssets, embossedStickerAssets, keepsakeDecorations, mysteryEmboss, stickerAssetForNight } from '@/data/keepsakeAssets';
+import { readDateKey } from '@/domain/calendar';
 import { formatDuration, formatLongDate } from '@/domain/format';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { colors, gradients, motion, nativeAnimationDriver, radii, surfaces, textStyles, typography, weight } from '@/theme';
@@ -30,14 +31,6 @@ const RAIL_SHADOW_SPACE = RAIL_PAD_TOP + RAIL_PAD_BOTTOM;
 /** Rule + plate number + state + detail line, at each density. Kept in step
  *  with the caption styles below; the card's height is derived from it. */
 const CAPTION_HEIGHT = { dense: 74, compact: 78, normal: 82 } as const;
-
-/** 'YYYY-MM-DD' in the user's own calendar. Parsed by parts rather than by
- *  `new Date(key)`, which would read it as UTC and slide a day backwards for
- *  anyone west of Greenwich. */
-function readDateKey(key: string) {
-  const [year = 1970, month = 1, day = 1] = key.split('-').map(Number);
-  return new Date(year, month - 1, day);
-}
 
 type CardState = {
   /** The night's real motif, or the blind disc every unearned night wears. */
@@ -88,7 +81,12 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
   const artFromHeight = maxHeight
     ? maxHeight - SPINE_GAP - SPINE_HEIGHT - RAIL_SHADOW_SPACE - chrome
     : Number.POSITIVE_INFINITY;
-  const artSize = Math.round(Math.max(76, Math.min(artFromWidth, artFromHeight)));
+  // The 76 floor keeps art legible, but it must not beat the budget the screen
+  // actually has: a card taller than its slot overflowed the frame and laid the
+  // spine's dots across the stats divider below. Give way to the height when
+  // there is genuinely less of it, down to a hard 48.
+  const artFloor = maxHeight ? Math.min(76, Math.max(48, artFromHeight)) : 76;
+  const artSize = Math.round(Math.max(artFloor, Math.min(artFromWidth, artFromHeight)));
   const cardHeight = chrome + artSize;
   const step = cardWidth + GAP;
 
@@ -125,8 +123,14 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
   return (
     <View style={styles.strip} onLayout={measure}>
       {width > 0 ? (
-        <ScrollView
-          ref={scroller}
+        /* Animated.ScrollView, not ScrollView: under a native driver
+           `Animated.event` returns an AnimatedEvent object rather than a handler
+           function, and only an Animated component unwraps it. A plain
+           ScrollView called it directly and threw "Object is not a function" on
+           the first scroll — on device only, because `nativeAnimationDriver` is
+           false on web, where it returns a real function. */
+        <Animated.ScrollView
+          ref={scroller as never}
           horizontal
           showsHorizontalScrollIndicator={false}
           snapToInterval={step}
@@ -165,7 +169,7 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
               onPress={() => (night.status === 'today' && canRecord ? onRecord() : onPressNight(night))}
             />
           ))}
-        </ScrollView>
+        </Animated.ScrollView>
       ) : null}
 
       <Spine nights={nights} />

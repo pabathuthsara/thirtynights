@@ -9,6 +9,14 @@ export function localDateKey(value: Date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+/** 'YYYY-MM-DD' in the user's own calendar. Parsed by parts rather than by
+ *  `new Date(key)`, which would read it as UTC and slide a day backwards for
+ *  anyone west of Greenwich. */
+export function readDateKey(key: string) {
+  const [year = 1970, month = 1, day = 1] = key.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export function addLocalDays(dateKey: string, days: number) {
   const [year = 1970, month = 1, day = 1] = dateKey.split('-').map(Number);
   const value = new Date(year, month - 1, day + days, 12, 0, 0, 0);

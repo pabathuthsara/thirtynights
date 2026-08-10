@@ -44,7 +44,9 @@ const styles = StyleSheet.create({
   header: {
     minHeight: HIT_TARGET + 8,
     marginHorizontal: -2,
-    marginBottom: 12,
+    // Screens already space their rows; 12 here stacked on top of that and left
+    // a visible dead band under the label, most obvious above Home's month.
+    marginBottom: 4,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Image, LayoutChangeEvent, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronRight, Clock, Cloud, CloudOff, RefreshCw } from 'lucide-react-native';
+import { ChevronRight, Cloud, CloudOff, RefreshCw } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
@@ -9,8 +9,9 @@ import { BottomSheet } from '@/components/BottomSheet';
 import { NightStrip } from '@/components/NightStrip';
 import { Screen, Stagger } from '@/components/Screen';
 import { Sparkle } from '@/components/Sparkle';
-import { formatDuration, formatMonth } from '@/domain/format';
-import { formatVoiceTime, totalVoiceSeconds } from '@/domain/stats';
+import { addLocalDays, localDateKey, readDateKey } from '@/domain/calendar';
+import { formatDuration, formatLongDate, formatMonth } from '@/domain/format';
+import { formatVoiceTime, isRecorded, totalVoiceSeconds } from '@/domain/stats';
 import { keepsakeDecorations } from '@/data/keepsakeAssets';
 import { colors, gradients, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 import type { Night } from '@/types';
@@ -38,29 +39,14 @@ function formatClock(hour: number, minute: number) {
   return minute ? `${h12}:${String(minute).padStart(2, '0')} ${suffix}` : `${h12} ${suffix}`;
 }
 
-/** The next time the quiet hour comes around, from a given moment. */
-function nextQuietHour(from: Date, hour: number, minute: number) {
-  const target = new Date(from);
-  target.setHours(hour, minute, 0, 0);
-  if (target <= from) target.setDate(target.getDate() + 1);
-  return target;
-}
-
-function formatWait(ms: number) {
-  const totalMinutes = Math.max(1, Math.round(ms / 60000));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (!hours) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
-  if (!minutes) return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
-  return `${hours}h ${minutes}m`;
-}
-
 export function HomeScreen({
   nights, recordedCount, currentNight, targetLength, accessThrough, accessTier, authState, syncing, newlyEarned,
   reminderHour, reminderMinute, onQuestion, onSettings, onPaywall,
 }: HomeProps) {
   const [detail, setDetail] = useState<Night | null>(null);
   const [boardHeight, setBoardHeight] = useState(0);
+  /** The sealed plate's timing, shown only when asked for. */
+  const [notice, setNotice] = useState<{ title: string; body: string } | null>(null);
   // A slow clock so the anticipation copy and the dusk dress stay current
   // without the screen ever visibly ticking.
   const [now, setNow] = useState(() => new Date());
@@ -93,7 +79,7 @@ export function HomeScreen({
   const trialEnded = accessTier === 'trial' && chapterClosed;
   const canRecord = currentNight.status === 'today' && !trialEnded && !chapterClosed;
 
-  const unbackedCount = nights.filter((night) => night.backedUp === false).length;
+  const unbackedCount = nights.filter((night) => isRecorded(night) && night.backedUp === false).length;
   const missedCount = nights.filter((night) => night.status === 'missed').length;
   const sealedToday = currentNight.status === 'sealed' || currentNight.status === 'revealed';
 
@@ -106,38 +92,46 @@ export function HomeScreen({
         : { tone: colors.mossText, icon: Cloud, copy: 'Your keepsake is up to date.' };
 
   const card = useMemo(() => {
-    if (trialEnded) return { label: 'Continue your keepsake', copy: 'Your first seven nights are safe. Choose how long the story continues.', arrival: undefined, wait: undefined, action: onPaywall, cta: 'See the chapters', art: 'journal' as const };
-    if (chapterClosed) return { label: 'This chapter is complete', copy: 'Your next collection is ready whenever you are.', arrival: undefined, wait: undefined, action: onPaywall, cta: 'Begin the next thirty', art: 'journal' as const };
-    if (canRecord) return { label: "Tonight's question", copy: 'A sealed question is waiting for you.', arrival: undefined, wait: undefined, action: onQuestion, cta: 'Open tonight’s letter', art: 'seal' as const };
-    // "Tonight's question ... tomorrow" contradicted itself. The letter is only
-    // "tonight's" while tonight can still deliver it; past the hour it is the
-    // next one.
-    const arrival = nextQuietHour(now, reminderHour, reminderMinute);
+    // The three states that ask for something keep the fuller note: they carry a
+    // call to action, and the sentence under the label is what justifies it.
+    if (trialEnded) return { variant: 'note' as const, label: 'Continue your keepsake', copy: 'Your first seven nights are safe. Choose how long the story continues.', action: onPaywall, cta: 'See the chapters', art: 'journal' as const };
+    if (chapterClosed) return { variant: 'note' as const, label: 'This chapter is complete', copy: 'Your next collection is ready whenever you are.', action: onPaywall, cta: 'Begin the next thirty', art: 'journal' as const };
+    if (canRecord) return { variant: 'note' as const, label: "Tonight's question", copy: 'A sealed question is waiting for you.', action: onQuestion, cta: 'Open tonight’s letter', art: 'seal' as const };
+    // A night unlocks on its date and stays open for the whole of it — the
+    // chosen hour only decides when the reminder arrives. The old copy said
+    // "opens at 9 PM tonight" with a countdown to that hour, which described a
+    // lock the app has never had, and would have read as broken to anyone who
+    // opened the app at 9:05 expecting something to have changed.
     const clock = formatClock(reminderHour, reminderMinute);
-    const wait = formatWait(arrival.getTime() - now.getTime());
-    const tonight = arrival.getDate() === now.getDate();
+    const opensOn = currentNight.expectedLocalDate;
+    const soon = opensOn === addLocalDays(localDateKey(now), 1) ? 'tomorrow' : `on ${formatLongDate(readDateKey(opensOn))}`;
+    const reminder = `Your reminder is set for ${clock}, but the question stays open all day — answer whenever suits.`;
+
+    // `currentNight` is only ever sealed when there is no later night to move on
+    // to — `nextCurrentNight` prefers today, then the next unlocked future night,
+    // and falls back to the last one. So reaching here means the run is done.
     if (sealedToday) {
-      const nextIndex = currentNight.index + 1;
       return {
-        label: 'Sealed for tonight',
-        copy: 'Your answer is tucked away.',
-        arrival: nextIndex <= targetLength ? `Night ${nextIndex} opens at ${clock} tomorrow` : undefined,
-        wait: nextIndex <= targetLength ? wait : undefined,
-        action: undefined,
-        cta: undefined,
+        variant: 'sealed' as const,
+        label: 'Tonight’s question',
+        title: 'Answered and kept',
+        detail: 'That was the last night available in this chapter.',
         art: 'seal' as const,
       };
     }
     return {
-      label: 'A letter is on its way',
-      copy: tonight ? 'Tonight’s question is still sealed.' : 'Your next question is still sealed.',
-      arrival: `Opens at ${clock} ${tonight ? 'tonight' : 'tomorrow'}`,
-      wait,
-      action: undefined,
-      cta: undefined,
+      variant: 'sealed' as const,
+      label: 'Your next question',
+      title: 'Still sealed',
+      detail: `Night ${currentNight.index} opens ${soon}. ${reminder}`,
       art: 'seal' as const,
     };
-  }, [canRecord, chapterClosed, currentNight.index, now, onPaywall, onQuestion, reminderHour, reminderMinute, sealedToday, targetLength, trialEnded]);
+  }, [canRecord, chapterClosed, currentNight.expectedLocalDate, currentNight.index, currentNight.status, now, onPaywall, onQuestion, reminderHour, reminderMinute, sealedToday, targetLength, trialEnded]);
+
+  const closeSheet = () => {
+    setDetail(null);
+    setNotice(null);
+  };
 
   const measureBoard = (event: LayoutChangeEvent) => {
     const next = event.nativeEvent.layout.height;
@@ -233,12 +227,43 @@ export function HomeScreen({
           place when there is nothing to do: the wait is the hook that brings
           someone back tomorrow. */}
       <Stagger index={3}>
-        {canRecord ? null : (
+        {canRecord ? null : card.variant === 'sealed' ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${card.label}. ${card.title}.`}
+            accessibilityHint="Shows when it opens"
+            onPress={() => setNotice({ title: `${card.label}: ${card.title.toLowerCase()}`, body: card.detail })}
+            style={({ pressed }) => [styles.cardWrap, pressed && styles.questionPressed]}
+          >
+            {/* Wax pressed onto the plate's top edge, half on and half off. */}
+            <Image
+              source={keepsakeDecorations.waxSeal}
+              resizeMode="contain"
+              accessibilityElementsHidden
+              style={[styles.cardSealArt, compact && styles.compactCardSealArt]}
+            />
+            <View style={[styles.sealedPlate, compact && styles.compactSealedPlate]}>
+              {/* Letterpress, the same trick the night cards' wells use: a soft
+                  fall of shade from the top edge so the plate reads as pressed
+                  into the page rather than laid on top of it. */}
+              <LinearGradient
+                colors={['rgba(102,67,80,0.07)', 'rgba(102,67,80,0)']}
+                style={styles.sealedPress}
+                pointerEvents="none"
+              />
+              <View style={styles.sealedFrame} pointerEvents="none" />
+              <Text numberOfLines={1} style={styles.questionLabel}>{card.label.toUpperCase()}</Text>
+              <View style={styles.sealedTitleRow}>
+                <Sparkle size={10} color={colors.brass} />
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.sealedTitle}>{card.title}</Text>
+                <Sparkle size={10} color={colors.brass} />
+              </View>
+            </View>
+          </Pressable>
+        ) : (
         <Pressable
-          accessibilityRole={card.action ? 'button' : 'summary'}
+          accessibilityRole="button"
           accessibilityLabel={`${card.label}. ${card.copy}`}
-          accessibilityState={{ disabled: !card.action }}
-          disabled={!card.action}
           onPress={card.action}
           style={({ pressed }) => [styles.cardWrap, pressed && styles.questionPressed]}
         >
@@ -254,11 +279,7 @@ export function HomeScreen({
               compact && (card.art === 'seal' ? styles.compactCardSealArt : styles.compactJournal),
             ]}
           />
-          <View style={[
-            styles.questionCard,
-            compact && styles.compactQuestionCard,
-            !card.action && styles.questionResting,
-          ]}>
+          <View style={[styles.questionCard, compact && styles.compactQuestionCard]}>
           <LinearGradient colors={gradients.cardSheen} style={styles.cardSheen} pointerEvents="none" />
           <View style={styles.questionCopy}>
             <Text numberOfLines={2} style={styles.questionLabel}>{card.label}</Text>
@@ -268,18 +289,6 @@ export function HomeScreen({
             >
               {card.copy}
             </Text>
-            {/* When the letter is still coming, the arrival and the wait are
-                two separate facts and are given their own lines. */}
-            {card.arrival ? (
-              <View style={styles.arrivalBlock}>
-                <View style={styles.arrivalRule} />
-                <View style={styles.arrivalRow}>
-                  <Clock size={13} strokeWidth={2} color={colors.paperDim} />
-                  <Text numberOfLines={1} style={styles.arrivalWhen}>{card.arrival}</Text>
-                </View>
-                {card.wait ? <Text style={styles.arrivalWait}>{card.wait} from now</Text> : null}
-              </View>
-            ) : null}
             {card.cta ? (
               <View style={styles.ctaRow}>
                 <Text style={styles.cta}>{card.cta}</Text>
@@ -299,12 +308,14 @@ export function HomeScreen({
         </View>
       </Stagger>
 
+      {/* One sheet serves both a tapped night and the plate's timing; two
+          would race each other for the same screen. */}
       <BottomSheet
-        visible={Boolean(detail)}
-        title={detail ? nightSheetTitle(detail) : ''}
-        body={detail ? nightSheetBody(detail) : undefined}
-        actions={[{ label: 'Alright', variant: 'outline', onPress: () => setDetail(null) }]}
-        onClose={() => setDetail(null)}
+        visible={Boolean(detail) || Boolean(notice)}
+        title={detail ? nightSheetTitle(detail) : notice?.title ?? ''}
+        body={detail ? nightSheetBody(detail) : notice?.body}
+        actions={[{ label: 'Alright', variant: 'outline', onPress: closeSheet }]}
+        onClose={closeSheet}
       />
     </Screen>
   );
@@ -335,11 +346,15 @@ function nightSheetBody(night: Night) {
 }
 
 const styles = StyleSheet.create({
+  // The gap is multiplied by four rows, so it is the single biggest lever on
+  // what is left for the board. At 14 the strip was squeezed until its art hit
+  // the 76pt floor in NightStrip and the mount letterboxed around a sticker too
+  // small to read — which is the one thing the strip exists to prevent.
   screen: {
     paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 22,
-    gap: 14,
+    paddingTop: 0,
+    paddingBottom: 16,
+    gap: 10,
   },
   denseScreen: {
     paddingHorizontal: 14,
@@ -361,7 +376,9 @@ const styles = StyleSheet.create({
     color: colors.bone,
     fontFamily: typography.serifSemiBold,
     fontSize: 52,
-    lineHeight: 66,
+    // 60 still clears Fraunces' descenders at this size; 66 was buying a second
+    // line's worth of air above a heading that only ever runs to one.
+    lineHeight: 60,
     letterSpacing: -1.8,
   },
   compactMonth: {
@@ -420,7 +437,7 @@ const styles = StyleSheet.create({
   stats: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 8,
   },
   stat: {
     flex: 1,
@@ -445,6 +462,73 @@ const styles = StyleSheet.create({
   cardWrap: {
     alignItems: 'center',
   },
+
+  /** The waiting state: a wax-sealed plate naming the night it holds, and
+   *  nothing else. Roughly half the height of the note it replaced, which is
+   *  the space the sticker above it needed.
+   *
+   *  The first pass drew an envelope flap — a hairline straight across the top —
+   *  and it landed exactly on the eyebrow, reading as text struck through. The
+   *  plate says "sealed" through the wax and the gilt frame instead, with
+   *  nothing crossing the copy. */
+  sealedPlate: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    // The seal is 54 tall and hangs 27 over the edge, so anything under 30 here
+    // puts the eyebrow against the wax. 38 clears it and lets the plate breathe.
+    paddingTop: 38,
+    paddingBottom: 22,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: surfaces.cardSoft,
+    overflow: 'hidden',
+    ...shadows.soft,
+    shadowOpacity: 0.08,
+  },
+  compactSealedPlate: {
+    paddingHorizontal: 18,
+    paddingTop: 32,
+    paddingBottom: 16,
+  },
+  sealedPress: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 58,
+  },
+  /** An inset gilt hairline, the way a keepsake plate is framed. Held clear of
+   *  the copy on every side, so it frames rather than crosses. */
+  sealedFrame: {
+    position: 'absolute',
+    top: 7,
+    left: 7,
+    right: 7,
+    bottom: 7,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(184,134,53,0.22)',
+  },
+  sealedTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  sealedTitle: {
+    // Bounded so `adjustsFontSizeToFit` has something to shrink against — a row
+    // child sizes to its content otherwise and the prop does nothing.
+    flexShrink: 1,
+    color: colors.bone,
+    fontFamily: typography.serifMedium,
+    fontSize: 23,
+    lineHeight: 30,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
   // A sealed note, not a notification. The seal overlaps the top edge, the
   // surface is the softer paper rather than the bright card, and the shadow is
   // light so the sticker board above stays the hero of the screen.
@@ -453,8 +537,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 20,
-    paddingTop: 30,
-    paddingBottom: 18,
+    // The seal overlaps this edge by 27, so the top padding only has to clear
+    // the half that lands on the paper — 30 was clearing the whole seal twice.
+    paddingTop: 24,
+    paddingBottom: 14,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.9)',
@@ -475,13 +561,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 64,
-  },
-  questionResting: {
-    backgroundColor: surfaces.cardSoft,
-    borderColor: colors.line,
-    borderStyle: 'dashed',
-    shadowOpacity: 0.05,
-    elevation: 1,
   },
   questionPressed: {
     transform: [{ scale: 0.985 }],
@@ -541,38 +620,6 @@ const styles = StyleSheet.create({
   denseQuestionText: {
     fontSize: 17,
     lineHeight: 22,
-  },
-  arrivalBlock: {
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 5,
-  },
-  // A short centred rule. A full-width one cut the little note in half.
-  arrivalRule: {
-    width: 34,
-    height: 1,
-    backgroundColor: colors.lineStrong,
-    marginBottom: 8,
-  },
-  arrivalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-  },
-  arrivalWhen: {
-    flexShrink: 1,
-    color: colors.bone,
-    fontFamily: typography.sans,
-    fontWeight: weight.semibold,
-    fontSize: 14,
-  },
-  arrivalWait: {
-    color: colors.paperDim,
-    fontFamily: typography.mono,
-    fontSize: 12,
-    letterSpacing: 0.4,
   },
   ctaRow: {
     flexDirection: 'row',

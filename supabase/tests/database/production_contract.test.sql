@@ -1,5 +1,5 @@
 begin;
-select plan(26);
+select plan(29);
 
 select has_column('public','chapters','target_length','chapters expose target_length');
 select has_column('public','chapters','access_through','chapters expose verified access');
@@ -8,6 +8,7 @@ select has_column('public','nights','client_id','server maps immutable client ni
 select has_column('public','reports','checkpoint_night','reports use checkpoint semantics');
 select has_table('private','report_jobs','report jobs are outside the exposed public schema');
 select has_table('private','transcript_segments','transcripts are outside the exposed public schema');
+select has_table('private','developer_accounts','developer cloud testing is explicitly allow-listed');
 select has_table('public','webhook_events','webhook events support replay protection');
 select has_function('public','sync_sealed_night',array['uuid','jsonb'],'seal RPC exists');
 select has_function('public','attach_night_audio',array['uuid','text','text','bigint'],'attachment RPC exists');
@@ -15,6 +16,11 @@ select has_function('public','retry_report',array['uuid'],'retry RPC exists');
 select has_function('public','process_revenuecat_event',array['jsonb','text'],'server ledger RPC exists');
 select has_function('public','initialize_chapter_schedule',array['text','date'],'schedule initialization RPC exists');
 select has_function('public','reconcile_chapter_state',array[]::text[],'chapter reconciliation RPC exists');
+select like(
+  pg_get_functiondef('public.reconcile_chapter_state()'::regprocedure),
+  '%when expected_local_date = local_today then ''today''%',
+  'chapter reconciliation opens the current local date'
+);
 select ok((select relrowsecurity from pg_class where oid='public.nights'::regclass),'nights RLS is enabled');
 select ok((select relrowsecurity from pg_class where oid='public.reports'::regclass),'reports RLS is enabled');
 select ok((select relrowsecurity from pg_class where oid='public.webhook_events'::regclass),'webhook events RLS is enabled');
@@ -23,6 +29,7 @@ select ok(not has_table_privilege('authenticated','public.purchases','INSERT'),'
 select ok(not has_table_privilege('authenticated','public.reports','UPDATE'),'mobile role cannot publish reports');
 select ok(not has_table_privilege('authenticated','public.webhook_events','SELECT'),'mobile role cannot read webhook payload metadata');
 select ok(not has_table_privilege('authenticated','public.deletion_requests','SELECT'),'mobile role cannot read deletion audit rows');
+select ok(not has_table_privilege('authenticated','private.developer_accounts','SELECT'),'mobile role cannot inspect the developer allow-list');
 select ok(exists(select 1 from storage.buckets where id='report-audio' and public=false),'report audio bucket is private');
 select is(
   (select array_agg(a.attname order by key_column.ordinality)::text[]

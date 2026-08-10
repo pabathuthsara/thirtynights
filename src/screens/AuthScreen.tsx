@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import { Apple, Mail, ShieldCheck } from 'lucide-react-native';
+import { Apple, LockKeyhole, Mail, ShieldCheck } from 'lucide-react-native';
 
 import { AppHeader } from '@/components/AppHeader';
 import { Button, TextButton } from '@/components/Buttons';
@@ -11,22 +11,23 @@ import {
   linkNativeAppleIdentity,
   linkOAuthIdentity,
   ProviderUnavailableError,
-  requestEmailUpgrade,
-  sendEmailSignInLink,
   signInNativeAppleIdentity,
+  signInWithEmail,
   signInWithOAuthProvider,
+  upgradeAnonymousWithEmailPassword,
 } from '@/lib/supabase';
 import { colors, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 
 export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnavailable }: {
   hasLocalRecordings: boolean;
   onBack: () => void;
-  onAuthenticated: (email?: string, ownerId?: string) => void;
+  onAuthenticated: (email?: string, ownerId?: string) => void | Promise<void>;
   onUnavailable: (provider: 'Apple Sign-In' | 'Email authentication') => void;
 }) {
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
   const [email, setEmail] = useState('');
-  const [focused, setFocused] = useState(false);
+  const [password, setPassword] = useState('');
+  const [focused, setFocused] = useState<'email' | 'password' | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -38,10 +39,16 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
     return false;
   };
 
+  const validPassword = () => {
+    if (password.length >= 8) return true;
+    setError('Use at least 8 characters for your password.');
+    return false;
+  };
+
   const submit = async () => {
     setError('');
     setNotice('');
-    if (!validEmail()) return;
+    if (!validEmail() || !validPassword()) return;
     if (mode === 'signin' && hasLocalRecordings) {
       setError('This phone has unmerged recordings. Sign-in is stopped to avoid changing their owner. Link a new identity instead, or contact support for a reviewed merge.');
       return;
@@ -53,11 +60,11 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
     try {
       setLoading(true);
       if (mode === 'signup') {
-        await requestEmailUpgrade(email.trim());
-        setNotice('Open the verification link we sent. This screen can close; the app will resume here with the same account.');
+        const user = await upgradeAnonymousWithEmailPassword(email.trim(), password);
+        await onAuthenticated(user.email, user.id);
       } else {
-        await sendEmailSignInLink(email.trim());
-        setNotice('Open the sign-in link we sent. It will return to this app and recover your backed-up chapters.');
+        const user = await signInWithEmail(email.trim(), password);
+        if (user) await onAuthenticated(user.email, user.id);
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Couldn't finish signing in.";
@@ -83,7 +90,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
       const user = Platform.OS === 'ios'
         ? mode === 'signin' ? await signInNativeAppleIdentity() : await linkNativeAppleIdentity()
         : mode === 'signin' ? await signInWithOAuthProvider('apple') : await linkOAuthIdentity('apple');
-      if (user) onAuthenticated(user.email, user.id);
+      if (user) await onAuthenticated(user.email, user.id);
     } catch (caught) {
       // A provider that was never switched on in the backend is an owner-setup
       // problem, not something the person holding the phone can fix by trying
@@ -130,8 +137,8 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
           <View style={styles.line} />
         </View>
 
-        <View style={[styles.fieldWrap, focused && styles.fieldFocused, Boolean(error) && styles.fieldError]}>
-          <Mail size={18} strokeWidth={1.9} color={focused ? colors.roseText : colors.boneFaint} />
+        <View style={[styles.fieldWrap, focused === 'email' && styles.fieldFocused, Boolean(error) && styles.fieldError]}>
+          <Mail size={18} strokeWidth={1.9} color={focused === 'email' ? colors.roseText : colors.boneFaint} />
           <TextInput
             ref={field}
             accessibilityLabel="Email address"
@@ -147,8 +154,29 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
             placeholderTextColor={colors.boneFaint}
             value={email}
             onChangeText={(value) => { setEmail(value); if (error) setError(''); }}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            onFocus={() => setFocused('email')}
+            onBlur={() => setFocused(null)}
+            style={styles.field}
+          />
+        </View>
+
+        <View style={[styles.fieldWrap, focused === 'password' && styles.fieldFocused, Boolean(error) && styles.fieldError]}>
+          <LockKeyhole size={18} strokeWidth={1.9} color={focused === 'password' ? colors.roseText : colors.boneFaint} />
+          <TextInput
+            accessibilityLabel="Password"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            textContentType={mode === 'signup' ? 'newPassword' : 'password'}
+            secureTextEntry
+            returnKeyType="go"
+            onSubmitEditing={() => void submit()}
+            placeholder={mode === 'signup' ? 'Create a password' : 'Password'}
+            placeholderTextColor={colors.boneFaint}
+            value={password}
+            onChangeText={(value) => { setPassword(value); if (error) setError(''); }}
+            onFocus={() => setFocused('password')}
+            onBlur={() => setFocused(null)}
             style={styles.field}
           />
         </View>
@@ -157,13 +185,13 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
         {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
 
         <Button loading={loading} onPress={() => void submit()}>
-          {mode === 'signin' ? 'Send sign-in link' : 'Send verification link'}
+          {mode === 'signin' ? 'Sign in' : 'Create account'}
         </Button>
 
         {!hasLocalRecordings ? (
           <View style={styles.switchMode}>
             <Text style={styles.switchCopy}>{mode === 'signin' ? 'Need an account?' : 'Already have an account?'}</Text>
-            <TextButton onPress={() => { setError(''); setNotice(''); setMode((value) => value === 'signin' ? 'signup' : 'signin'); }}>
+            <TextButton onPress={() => { setError(''); setNotice(''); setPassword(''); setMode((value) => value === 'signin' ? 'signup' : 'signin'); }}>
               {mode === 'signin' ? 'Link this device' : 'Sign in'}
             </TextButton>
           </View>

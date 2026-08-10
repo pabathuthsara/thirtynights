@@ -107,6 +107,7 @@ async function saveNativeNow(
   snapshot: AppSnapshot,
   existingInstance?: SQLiteDatabase,
   outbox: PendingOutboxInsert | PendingOutboxInsert[] = [],
+  replaceOutbox = false,
 ) {
   const instance = existingInstance ?? await db();
   await instance.withExclusiveTransactionAsync(async (transaction) => {
@@ -114,6 +115,7 @@ async function saveNativeNow(
     await transaction.runAsync('DELETE FROM reports');
     await transaction.runAsync('DELETE FROM nights');
     await transaction.runAsync('DELETE FROM chapters');
+    if (replaceOutbox) await transaction.runAsync('DELETE FROM outbox');
 
     const chapters = [snapshot.currentChapter, ...snapshot.completedChapters];
     for (const chapter of chapters) {
@@ -360,6 +362,58 @@ export async function saveLocalState(snapshot: AppSnapshot) {
   else await saveNative(snapshot);
 }
 
+/**
+ * Detaches device-owned recordings from a deleted/replaced cloud identity and
+ * queues them again for the new owner. The audio bytes and stamps remain local;
+ * only stale server paths and report objects are discarded.
+ */
+export async function rebindLocalCloudIdentity(
+  snapshot: AppSnapshot,
+  ownerId: string,
+  authState: AppSnapshot['authState'],
+  email?: string,
+) {
+  if (!snapshot.ownerId || snapshot.ownerId === ownerId) {
+    return { ...snapshot, ownerId, authState, email };
+  }
+
+  const currentChapter: Chapter = {
+    ...snapshot.currentChapter,
+    serverRevision: 0,
+    nights: snapshot.currentChapter.nights.map((night) => !night.recordedAt ? night : {
+      ...night,
+      status: night.status === 'revealed' ? 'sealed' as const : night.status,
+      storagePath: undefined,
+      backedUp: false,
+      backupState: night.localUri && night.checksum && night.byteSize !== undefined
+        ? authState === 'authenticated' ? 'waiting-wifi' as const : 'waiting-account' as const
+        : 'attention' as const,
+      revealAt: undefined,
+    }),
+  };
+  const next: AppSnapshot = {
+    ...snapshot,
+    ownerId,
+    authState,
+    email,
+    currentChapter,
+    reports: [],
+  };
+  const outbox: PendingOutboxInsert[] = [];
+  for (const night of currentChapter.nights) {
+    if (!night.recordedAt || !night.localUri || !night.checksum || night.byteSize === undefined) continue;
+    const payload = sealPayload(currentChapter, night);
+    outbox.push({
+      operationId: Crypto.randomUUID(),
+      entityId: night.id,
+      payload,
+      payloadHash: await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, payload),
+    });
+  }
+  await serializeNativeWrite(() => saveNativeNow(next, undefined, outbox, true));
+  return next;
+}
+
 export async function sealNightLocally(snapshot: AppSnapshot, params: { durationSec: number; temporaryUri?: string }) {
   const chapter = snapshot.currentChapter;
   const activeNight = chapter.nights.find((night) => night.status === 'today');
@@ -410,9 +464,15 @@ export async function sealNightLocally(snapshot: AppSnapshot, params: { duration
   return next;
 }
 
-export async function pendingOutboxOperations() {
+export async function pendingOutboxOperations(ignoreBackoff = false) {
   if (Platform.OS === 'web') return [];
   const instance = await db();
+  if (ignoreBackoff) {
+    return instance.getAllAsync<{ operation_id: string; entity_id: string; operation: string; payload: string; attempts: number }>(
+      `SELECT operation_id, entity_id, operation, payload, attempts FROM outbox
+       WHERE completed_at IS NULL ORDER BY next_attempt_at LIMIT 10`,
+    );
+  }
   return instance.getAllAsync<{ operation_id: string; entity_id: string; operation: string; payload: string; attempts: number }>(
     `SELECT operation_id, entity_id, operation, payload, attempts FROM outbox
      WHERE completed_at IS NULL AND next_attempt_at <= ? ORDER BY next_attempt_at LIMIT 10`,

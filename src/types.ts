@@ -51,6 +51,7 @@ export type ReportEvidence = {
 export type ReportSection = {
   title: string;
   body: string;
+  guidance?: string;
   eyebrow?: string;
   evidence: ReportEvidence[];
 };
@@ -117,6 +118,7 @@ export type RouteName =
   | 'light-map'
   | 'settings'
   | 'popup-catalog'
+  | 'dev-recordings'
   | 'paywall'
   | 'auth';
 

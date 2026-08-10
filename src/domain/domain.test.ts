@@ -4,6 +4,7 @@ import { addLocalDays, dayOfYear, daysInYear, reconcileChapter } from '@/domain/
 import { checkpointsForLength, isReport } from '@/domain/report';
 import { completionRate, formatVoiceTime, streaks, yearMap } from '@/domain/stats';
 import { questionAssignment } from '@/data/questions';
+import { mergeHydratedNight } from '@/domain/syncMerge';
 import type { Chapter, Night } from '@/types';
 
 function night(index: number, date: string, status: Night['status'] = 'future'): Night {
@@ -20,6 +21,11 @@ describe('calendar reconciliation', () => {
     expect(result.nights.map((item) => item.status)).toEqual(['missed', 'today', 'future']);
   });
 
+  it('repairs a stale cloud future status when its scheduled date is today', () => {
+    const result = reconcileChapter(chapter([night(1, '2026-08-09', 'future')]), new Date(2026, 7, 9, 20));
+    expect(result.nights[0]?.status).toBe('today');
+  });
+
   it('does not turn revoked or ungranted past dates into missed nights', () => {
     const result = reconcileChapter(chapter([night(1, '2026-01-01', 'sealed'), night(2, '2026-01-02')], 1), new Date('2026-01-04T12:00:00'));
     expect(result.nights[1]?.status).toBe('future');
@@ -27,6 +33,43 @@ describe('calendar reconciliation', () => {
 
   it('adds civil days across a DST boundary', () => expect(addLocalDays('2026-03-07', 2)).toBe('2026-03-09'));
   it('handles leap years and zero-based day indexes', () => { expect(daysInYear(2028)).toBe(366); expect(dayOfYear(new Date(2028, 11, 31, 12))).toBe(365); });
+});
+
+describe('sync hydration', () => {
+  it('preserves a pending local seal when the remote night is still open', () => {
+    const remote = night(1, '2026-08-09', 'today');
+    const local = {
+      ...remote,
+      status: 'sealed' as const,
+      recordedAt: '2026-08-09T14:30:00.000Z',
+      recordedHour: 20,
+      durationSec: 42,
+      localUri: 'blob:recording',
+      checksum: 'a'.repeat(64),
+      byteSize: 2048,
+      backedUp: false,
+      backupState: 'waiting-account' as const,
+    };
+
+    expect(mergeHydratedNight(remote, local)).toMatchObject({
+      status: 'sealed',
+      recordedAt: local.recordedAt,
+      durationSec: 42,
+      localUri: 'blob:recording',
+    });
+  });
+
+  it('uses immutable server seal metadata after the server accepts it', () => {
+    const local = { ...night(1, '2026-08-09', 'sealed'), recordedAt: '2026-08-09T14:30:00.000Z', durationSec: 42, localUri: 'file://local.m4a' };
+    const remote = { ...night(1, '2026-08-09', 'sealed'), recordedAt: '2026-08-09T14:30:00.000Z', durationSec: 43, storagePath: 'user/chapter/night.m4a', backedUp: true };
+
+    expect(mergeHydratedNight(remote, local)).toMatchObject({
+      durationSec: 43,
+      localUri: 'file://local.m4a',
+      backedUp: true,
+      backupState: 'backed-up',
+    });
+  });
 });
 
 describe('selectors and contracts', () => {

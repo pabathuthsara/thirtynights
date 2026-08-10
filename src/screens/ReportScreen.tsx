@@ -197,6 +197,12 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
                 <Text style={styles.eyebrow}>{section.eyebrow || `Thread ${index + 1}`}</Text>
                 <Text accessibilityRole="header" style={styles.sectionTitle}>{section.title}</Text>
                 <Text style={styles.body}>{section.body}</Text>
+                {section.guidance ? (
+                  <View style={styles.guidance}>
+                    <Text style={styles.guidanceLabel}>Try this next</Text>
+                    <Text style={styles.guidanceText}>{section.guidance}</Text>
+                  </View>
+                ) : null}
                 {section.evidence.map((evidence) => {
                   const playingThis = activeEvidence === evidence.segmentId;
                   return (
@@ -393,6 +399,30 @@ const styles = StyleSheet.create({
     fontWeight: weight.regular,
     fontSize: 17,
     lineHeight: 28,
+  },
+  guidance: {
+    marginTop: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.brass,
+    borderRadius: radii.sm,
+    backgroundColor: 'rgba(220, 177, 132, 0.13)',
+  },
+  guidanceLabel: {
+    color: colors.brassText,
+    fontFamily: typography.mono,
+    fontSize: 11,
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    marginBottom: 7,
+  },
+  guidanceText: {
+    color: colors.paperInk,
+    fontFamily: typography.sans,
+    fontWeight: weight.medium,
+    fontSize: 16,
+    lineHeight: 25,
   },
   // A torn scrap of paper, tilted slightly, with room at the top for the wax
   // dot that overlaps its edge.

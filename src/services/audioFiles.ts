@@ -35,7 +35,13 @@ export function sealMarkerFile(chapterId: string, nightId: string) {
 export async function persistRecording(params: { chapterId: string; nightId: string; temporaryUri?: string; recovery?: SealRecoveryMetadata }) {
   if (!params.temporaryUri) throw new Error('The recorder did not return a file. Tonight remains open.');
   if (Platform.OS === 'web') {
-    return { uri: params.temporaryUri, byteSize: 0, checksum: `web-${params.nightId}` };
+    const response = await fetch(params.temporaryUri);
+    if (!response.ok) throw new Error('The browser recording could not be read. Tonight remains open.');
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength <= 0) throw new Error('The browser recording is empty. Tonight remains open.');
+    if (bytes.byteLength > MAX_RECORDING_BYTES) throw new Error('That recording is larger than the safe upload limit. Tonight remains open.');
+    const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes);
+    return { uri: params.temporaryUri, byteSize: bytes.byteLength, checksum: hex(digest) };
   }
 
   const destination = durableRecordingFile(params.chapterId, params.nightId);

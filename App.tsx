@@ -24,6 +24,7 @@ import { HomeScreen } from '@/screens/HomeScreen';
 import { OnboardingScreen } from '@/screens/OnboardingScreen';
 import { IntentionScreen, PlanScreen } from '@/screens/OnboardingSteps';
 import { PaywallScreen } from '@/screens/PaywallScreen';
+import { DevRecordingsScreen } from '@/screens/DevRecordingsScreen';
 import { PopupCatalogScreen } from '@/screens/PopupCatalogScreen';
 import { QuestionScreen } from '@/screens/QuestionScreen';
 import { RewardScreen } from '@/screens/RewardScreen';
@@ -52,7 +53,7 @@ function ThirtyNightsApp() {
   const {
     snapshot, ready, syncing, currentNight, recordedCount, updateReminder, setIntentions, finishOnboarding,
     sealCurrentNight, setAuthDetails, setNotificationsEnabled, setGentleNudge, setBackupNetwork,
-    setProcessingConsent, syncNow, loadDemo, resetEverything,
+    setProcessingConsent, syncNow, loadDemo, advanceOneNight, resetEverything,
   } = useApp();
   const [route, setRoute] = useState<RouteName>('onboarding');
   const [pendingReport, setPendingReport] = useState(false);
@@ -125,6 +126,7 @@ function ThirtyNightsApp() {
           setRoute('gallery');
           return true;
         case 'popup-catalog':
+        case 'dev-recordings':
           setRoute('settings');
           return true;
         case 'auth':
@@ -219,7 +221,7 @@ function ThirtyNightsApp() {
 
   const shareReport = async () => {
     if (!currentReport || currentReport.status !== 'ready') throw new Error('The report is not ready to share.');
-    const sections = currentReport.sections.map((section) => `${section.title}\n${section.body}`).join('\n\n');
+    const sections = currentReport.sections.map((section) => [section.title, section.body, section.guidance ? `Try this next: ${section.guidance}` : ''].filter(Boolean).join('\n')).join('\n\n');
     await Share.share({ title: `Thirty Nights — ${currentReport.checkpointNight} nights`, message: `${currentReport.summary || ''}\n\n${sections}`.trim() });
   };
 
@@ -344,17 +346,20 @@ function ThirtyNightsApp() {
       break;
     case 'settings': {
       const unbackedCount = [snapshot.currentChapter, ...snapshot.completedChapters].flatMap((chapter) => chapter.nights).filter((night) => isRecorded(night) && !night.backedUp).length;
-      screen = <SettingsScreen reminderHour={snapshot.reminderHour} reminderMinute={snapshot.reminderMinute} notificationsEnabled={snapshot.notificationsEnabled} gentleNudge={snapshot.gentleNudge} authState={snapshot.authState} email={snapshot.email} backupNetwork={snapshot.backupNetwork} processingConsent={Boolean(snapshot.processingConsentVersion)} unbackedCount={unbackedCount} syncing={syncing} showDeveloperControls={__DEV__ && process.env.EXPO_PUBLIC_APP_ENV !== 'production'} onBack={() => setRoute('home')} onAuth={() => openAuth('settings')} onEditReminder={() => { setReturnAfterTime('settings'); setRoute('time-picker'); }} onToggleNotifications={toggleNotifications} onToggleNudge={setGentleNudge} onBackupNetwork={setBackupNetwork} onEnableProcessing={() => { setProcessingConsent('cloud-processing-v1'); void syncNow().catch(() => undefined); }} onSync={syncNow} onRestore={() => setRoute('paywall')} onExport={async () => { const result = await exportEverything(snapshot); if (result.partial) setNotice({ title: 'Partial export prepared.', body: 'The archive includes all metadata and reports, plus every recording available on this device or from cloud backup. At least one raw recording was unavailable.' }); }} onPrivacy={() => openExternalSafely(process.env.EXPO_PUBLIC_PRIVACY_URL, 'Published privacy policy')} onTerms={() => openExternalSafely(process.env.EXPO_PUBLIC_TERMS_URL, 'Published terms of use')} onSupport={() => openExternalSafely(process.env.EXPO_PUBLIC_SUPPORT_URL, 'Published support page')} onWebDelete={() => openExternalSafely(process.env.EXPO_PUBLIC_DELETE_ACCOUNT_URL, 'Web account-deletion page')} onPreview={(mode) => { loadDemo(mode); setRoute(mode === 'complete' ? 'report' : 'home'); }} onPopupCatalog={() => setRoute('popup-catalog')} onPreviewSealing={() => { setPendingReport(false); setRoute('sealing'); }} onDelete={async (remote) => { await resetEverything(remote); initialized.current = true; setRoute('onboarding'); }} />;
+      screen = <SettingsScreen reminderHour={snapshot.reminderHour} reminderMinute={snapshot.reminderMinute} notificationsEnabled={snapshot.notificationsEnabled} gentleNudge={snapshot.gentleNudge} authState={snapshot.authState} email={snapshot.email} backupNetwork={snapshot.backupNetwork} processingConsent={Boolean(snapshot.processingConsentVersion)} unbackedCount={unbackedCount} syncing={syncing} showDeveloperControls={__DEV__ && process.env.EXPO_PUBLIC_APP_ENV !== 'production'} onBack={() => setRoute('home')} onAuth={() => openAuth('settings')} onEditReminder={() => { setReturnAfterTime('settings'); setRoute('time-picker'); }} onToggleNotifications={toggleNotifications} onToggleNudge={setGentleNudge} onBackupNetwork={setBackupNetwork} onEnableProcessing={() => { setProcessingConsent('cloud-processing-v1'); void syncNow().catch(() => undefined); }} onSync={syncNow} onRestore={() => setRoute('paywall')} onExport={async () => { const result = await exportEverything(snapshot); if (result.partial) setNotice({ title: 'Partial export prepared.', body: 'The archive includes all metadata and reports, plus every recording available on this device or from cloud backup. At least one raw recording was unavailable.' }); }} onPrivacy={() => openExternalSafely(process.env.EXPO_PUBLIC_PRIVACY_URL, 'Published privacy policy')} onTerms={() => openExternalSafely(process.env.EXPO_PUBLIC_TERMS_URL, 'Published terms of use')} onSupport={() => openExternalSafely(process.env.EXPO_PUBLIC_SUPPORT_URL, 'Published support page')} onWebDelete={() => openExternalSafely(process.env.EXPO_PUBLIC_DELETE_ACCOUNT_URL, 'Web account-deletion page')} onPreview={(mode) => { loadDemo(mode); setRoute(mode === 'complete' ? 'report' : 'home'); }} onPopupCatalog={() => setRoute('popup-catalog')} onDevRecordings={() => setRoute('dev-recordings')} onAdvanceNight={() => { advanceOneNight(); setRoute('home'); }} onPreviewSealing={() => { setPendingReport(false); setRoute('sealing'); }} onDelete={async (remote) => { await resetEverything(remote); initialized.current = true; setRoute('onboarding'); }} />;
       break;
     }
     case 'popup-catalog':
       screen = <PopupCatalogScreen onBack={() => setRoute('settings')} />;
       break;
+    case 'dev-recordings':
+      screen = <DevRecordingsScreen chapters={allChapters} onBack={() => setRoute('settings')} />;
+      break;
     case 'paywall':
       screen = <PaywallScreen authState={snapshot.authState} ownerId={snapshot.ownerId} nightsKept={recordedCount} voiceSeconds={totalVoiceSeconds(snapshot.currentChapter.nights)} targetLength={snapshot.currentChapter.targetLength} onBack={() => setRoute('home')} onAuth={() => openAuth('paywall')} onVerifying={async () => { await syncNow(); setRoute('home'); }} onUnavailable={() => ownerSetup('Store products and RevenueCat')} onPrivacy={() => openExternalSafely(process.env.EXPO_PUBLIC_PRIVACY_URL, 'Published privacy policy')} onTerms={() => openExternalSafely(process.env.EXPO_PUBLIC_TERMS_URL, 'Published terms of use')} />;
       break;
     case 'auth':
-      screen = <AuthScreen hasLocalRecordings={snapshot.currentChapter.nights.some((night) => Boolean(night.recordedAt))} onBack={() => setRoute(returnAfterAuth)} onAuthenticated={(email, ownerId) => { setAuthDetails(email, undefined, ownerId); setRoute(returnAfterAuth); void syncNow().catch(() => undefined); }} onUnavailable={(provider) => ownerSetup(provider)} />;
+      screen = <AuthScreen hasLocalRecordings={snapshot.currentChapter.nights.some((night) => Boolean(night.recordedAt))} onBack={() => setRoute(returnAfterAuth)} onAuthenticated={async (email, ownerId) => { await setAuthDetails(email, undefined, ownerId); setRoute(returnAfterAuth); await syncNow(); }} onUnavailable={(provider) => ownerSetup(provider)} />;
       break;
     case 'home':
     default:

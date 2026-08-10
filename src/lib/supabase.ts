@@ -8,6 +8,7 @@ import * as Crypto from 'expo-crypto';
 import { createClient } from '@supabase/supabase-js';
 
 import { appIdentifiers } from '@/config/environment';
+import { mergeHydratedNight } from '@/domain/syncMerge';
 import { secureStorage } from '@/lib/secureStorage';
 import type { AppSnapshot, Chapter, Night, Report, ReportSection } from '@/types';
 
@@ -33,6 +34,13 @@ export const supabase = isSupabaseConfigured
 
 export const authRedirectUri = makeRedirectUri({ scheme: appIdentifiers.scheme, path: 'auth/callback' });
 
+async function sessionHasAnonymousClaim(accessToken: string) {
+  if (!supabase) return false;
+  const { data, error } = await supabase.auth.getClaims(accessToken);
+  if (error) throw error;
+  return data?.claims?.is_anonymous === true;
+}
+
 // On web the provider returns into a popup that has to hand its result back to
 // the opener and close itself. Without this the browser preview hangs on a
 // blank tab after a successful Google sign-in. No-op on native.
@@ -43,34 +51,98 @@ export async function ensureAnonymousSession() {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw sessionError;
   if (sessionData.session?.user) {
-    return {
-      userId: sessionData.session.user.id,
-      email: sessionData.session.user.email,
-      state: sessionData.session.user.is_anonymous ? ('anonymous' as const) : ('authenticated' as const),
-    };
+    // getSession() only reads the cached JWT. A user deleted from the Auth
+    // dashboard can therefore look signed in forever on the device even though
+    // every authenticated request fails. Validate it with the Auth server
+    // before trusting the cached identity.
+    const { data: verified, error: verificationError } = await supabase.auth.getUser();
+    if (verified.user) {
+      // Converting an anonymous identity to email/password changes the server
+      // user immediately, but an already-issued JWT can retain
+      // `is_anonymous: true`. Refresh it before Storage evaluates policies.
+      if (!verified.user.is_anonymous && await sessionHasAnonymousClaim(sessionData.session.access_token)) {
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError) throw refreshError;
+        if (!refreshed.session?.user) throw new Error('The permanent account session could not be refreshed.');
+        return {
+          userId: refreshed.session.user.id,
+          email: refreshed.session.user.email,
+          state: refreshed.session.user.is_anonymous ? ('anonymous' as const) : ('authenticated' as const),
+        };
+      }
+      return {
+        userId: verified.user.id,
+        email: verified.user.email,
+        state: verified.user.is_anonymous ? ('anonymous' as const) : ('authenticated' as const),
+      };
+    }
+    const status = (verificationError as { status?: number } | null)?.status;
+    if (verificationError && status !== 401 && status !== 403) throw verificationError;
+    await supabase.auth.signOut({ scope: 'local' });
   }
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error) throw error;
-  return { userId: data.user?.id ?? null, email: data.user?.email, state: 'anonymous' as const };
+  if (!data.user) throw new Error('Supabase did not create a cloud identity.');
+  return {
+    userId: data.user.id,
+    email: data.user.email,
+    state: data.user.is_anonymous ? ('anonymous' as const) : ('authenticated' as const),
+  };
 }
 
-export async function requestEmailUpgrade(email: string) {
+/**
+ * Converts the current anonymous identity into an email/password account
+ * without changing its user id. Hosted Auth must have email confirmations
+ * disabled: Supabase only allows a password to be attached after the email
+ * identity is confirmed.
+ */
+export async function upgradeAnonymousWithEmailPassword(email: string, password: string) {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
+  await ensureAnonymousSession();
   const before = (await supabase.auth.getUser()).data.user;
   if (!before) throw new Error('The local cloud identity could not be restored.');
-  const { data, error } = await supabase.auth.updateUser({ email }, { emailRedirectTo: authRedirectUri });
-  if (error) throw error;
-  if (!data.user || data.user.id !== before.id) throw new Error('Account identity changed unexpectedly. Contact support before continuing.');
-  return data.user;
+  if (!before.is_anonymous) throw new Error('This device is already linked to an account.');
+  const { data: emailData, error: emailError } = await supabase.auth.updateUser({ email });
+  if (emailError) throw emailError;
+  if (!emailData.user || emailData.user.id !== before.id) {
+    throw new Error('Account identity changed unexpectedly. Contact support before continuing.');
+  }
+  if (!emailData.user.email_confirmed_at) {
+    throw new Error('Email confirmation is still enabled in Supabase. Disable Confirm email and try again.');
+  }
+
+  const { data: passwordData, error: passwordError } = await supabase.auth.updateUser({ password });
+  if (passwordError) throw passwordError;
+  if (!passwordData.user || passwordData.user.id !== before.id) {
+    throw new Error('Account identity changed unexpectedly. Contact support before continuing.');
+  }
+  // RLS reads account state from the access-token claims, not from the fresh
+  // `/user` response. Force a new JWT so Storage sees `is_anonymous: false`.
+  const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+  if (refreshError) throw refreshError;
+  if (!refreshed.session?.user || refreshed.session.user.is_anonymous) {
+    throw new Error('The permanent account session could not be refreshed.');
+  }
+  return refreshed.session.user;
 }
 
-export async function setPasswordAfterVerification(password: string) {
+export async function permanentUploadIdentity() {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
   const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user?.email_confirmed_at) throw userError ?? new Error('Verify the email link before setting a password.');
-  const { data, error } = await supabase.auth.updateUser({ password });
-  if (error) throw error;
-  return data.user;
+  if (userError) throw userError;
+  if (!userData.user || userData.user.is_anonymous) return null;
+
+  let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (!sessionData.session) return null;
+
+  if (await sessionHasAnonymousClaim(sessionData.session.access_token)) {
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.error) throw refreshed.error;
+    sessionData = refreshed.data;
+  }
+  if (!sessionData.session || await sessionHasAnonymousClaim(sessionData.session.access_token)) return null;
+  return { user: userData.user, session: sessionData.session };
 }
 
 export async function signInWithEmail(email: string, password: string) {
@@ -78,15 +150,6 @@ export async function signInWithEmail(email: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data.user;
-}
-
-export async function sendEmailSignInLink(email: string) {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: authRedirectUri, shouldCreateUser: false },
-  });
-  if (error) throw error;
 }
 
 export async function sendPasswordReset(email: string) {
@@ -322,15 +385,7 @@ function mergeRemoteChapter(remote: RemoteChapter, local?: Chapter): Chapter {
     ...mapped,
     nights: mapped.nights.map((night) => {
       const localNight = local.nights.find((candidate) => candidate.id === night.id || candidate.index === night.index);
-      if (!localNight?.recordedAt) return night;
-      return {
-        ...night,
-        localUri: localNight.localUri,
-        checksum: night.checksum ?? localNight.checksum,
-        byteSize: night.byteSize ?? localNight.byteSize,
-        backedUp: night.backedUp || localNight.backedUp,
-        backupState: night.backedUp ? 'backed-up' : localNight.backupState,
-      };
+      return mergeHydratedNight(night, localNight);
     }),
   };
 }

@@ -1,9 +1,9 @@
 import { AppState } from 'react-native';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 
-import { reconcileSnapshot } from '@/domain/calendar';
+import { addLocalDays, reconcileSnapshot } from '@/domain/calendar';
 import { isRecorded } from '@/domain/stats';
-import { clearLocalState, initializeLocalState, saveLocalState, sealNightLocally } from '@/lib/localRepository';
+import { clearLocalState, initializeLocalState, rebindLocalCloudIdentity, saveLocalState, sealNightLocally } from '@/lib/localRepository';
 import { defaultSnapshot, makeChapter } from '@/lib/snapshot';
 import { clearLocalCloudSession, ensureAnonymousSession, requestRemoteDeletion, subscribeToAuthLinks } from '@/lib/supabase';
 import { deleteAllRecordings } from '@/services/audioFiles';
@@ -22,13 +22,15 @@ type AppContextValue = {
   setIntentions: (intentions: IntentionId[]) => void;
   finishOnboarding: (notificationsEnabled: boolean) => void;
   sealCurrentNight: (durationSec: number, localUri?: string) => Promise<boolean>;
-  setAuthDetails: (email?: string, displayName?: string, ownerId?: string) => void;
+  setAuthDetails: (email?: string, displayName?: string, ownerId?: string) => Promise<void>;
   setNotificationsEnabled: (enabled: boolean) => void;
   setGentleNudge: (enabled: boolean) => void;
   setBackupNetwork: (value: AppSnapshot['backupNetwork']) => void;
   setProcessingConsent: (version: string) => void;
   syncNow: () => Promise<void>;
   loadDemo: (mode: DemoMode) => void;
+  /** Development only: pulls the schedule back a day so the next night unlocks. */
+  advanceOneNight: () => void;
   resetEverything: (remote?: boolean) => Promise<void>;
 };
 
@@ -82,22 +84,77 @@ export function AppProvider({ children }: PropsWithChildren) {
   const [ready, setReady] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const syncLock = useRef(false);
+  const syncQueued = useRef(false);
+  const forceSyncQueued = useRef(false);
+  const localRevision = useRef(0);
   const latest = useRef(snapshot);
   latest.current = snapshot;
 
-  const runSync = useCallback(async () => {
-    if (syncLock.current || !latest.current.onboarded) return;
+  /** Commit a user/device mutation synchronously to the ref as well as React.
+   *  The revision prevents an older in-flight sync from overwriting it. */
+  const update = useCallback((recipe: (current: AppSnapshot) => AppSnapshot) => {
+    const next = recipe(latest.current);
+    latest.current = next;
+    localRevision.current += 1;
+    setSnapshot(next);
+    return next;
+  }, []);
+
+  const runSync = useCallback(async (ignoreOutboxBackoff = false) => {
+    if (!latest.current.onboarded) return;
+    if (ignoreOutboxBackoff) forceSyncQueued.current = true;
+    if (syncLock.current) {
+      // A seal or preference change that arrives during sync must get its own
+      // pass. Dropping this request was what let the pre-seal result win.
+      syncQueued.current = true;
+      return;
+    }
     syncLock.current = true;
     setSyncing(true);
     try {
-      const next = await synchronize(reconcileSnapshot(latest.current));
-      latest.current = next;
-      setSnapshot(next);
+      do {
+        syncQueued.current = false;
+        const forceThisPass = forceSyncQueued.current;
+        forceSyncQueued.current = false;
+        const startedFrom = latest.current;
+        const startedAtRevision = localRevision.current;
+        const next = await synchronize(reconcileSnapshot(startedFrom), { ignoreOutboxBackoff: forceThisPass });
+
+        if (localRevision.current === startedAtRevision && latest.current === startedFrom) {
+          // Persist only after proving this pass did not race a newer local
+          // mutation. `synchronize` deliberately does not write snapshots.
+          await saveLocalState(next);
+          latest.current = next;
+          setSnapshot(next);
+        } else {
+          // A local mutation landed while this pass was in flight. Discard the
+          // stale result and immediately sync the newer durable snapshot.
+          syncQueued.current = true;
+        }
+      } while (syncQueued.current && latest.current.onboarded);
     } finally {
       syncLock.current = false;
       setSyncing(false);
     }
   }, []);
+
+  const syncNow = useCallback(async () => {
+    await runSync(true);
+    const remaining = [latest.current.currentChapter, ...latest.current.completedChapters]
+      .flatMap((chapter) => chapter.nights)
+      .filter((night) => isRecorded(night) && !night.backedUp).length;
+    if (remaining) {
+      throw new Error(`${remaining} recording${remaining === 1 ? ' is' : 's are'} still waiting to back up.`);
+    }
+  }, [runSync]);
+
+  const adoptAuthDetails = useCallback(async (email?: string, displayName?: string, ownerId?: string) => {
+    const current = latest.current;
+    const next = ownerId
+      ? await rebindLocalCloudIdentity(current, ownerId, 'authenticated', email)
+      : { ...current, authState: 'authenticated' as const, email };
+    update(() => ({ ...next, displayName }));
+  }, [update]);
 
   useEffect(() => {
     let active = true;
@@ -105,12 +162,9 @@ export function AppProvider({ children }: PropsWithChildren) {
       let stored = await initializeLocalState();
       try {
         const session = await ensureAnonymousSession();
-        stored = {
-          ...stored,
-          ownerId: session.userId ?? stored.ownerId,
-          email: session.email ?? stored.email,
-          authState: session.state,
-        };
+        stored = session.userId
+          ? await rebindLocalCloudIdentity(stored, session.userId, session.state, session.email)
+          : { ...stored, email: session.email ?? stored.email, authState: session.state };
       } catch {
         // Local-first recording remains available when cloud identity is unavailable.
       }
@@ -122,12 +176,13 @@ export function AppProvider({ children }: PropsWithChildren) {
     })();
 
     const removeLinkListener = subscribeToAuthLinks((ownerId, email) => {
-      setSnapshot((current) => ({ ...current, ownerId, email, authState: 'authenticated' }));
-      void runSync().catch(() => undefined);
+      void adoptAuthDetails(email, undefined, ownerId)
+        .then(() => runSync())
+        .catch(() => undefined);
     });
     const appState = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        setSnapshot((current) => reconcileSnapshot(current));
+        update((current) => reconcileSnapshot(current));
         void runSync().catch(() => undefined);
       }
     });
@@ -136,7 +191,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       removeLinkListener();
       appState.remove();
     };
-  }, [runSync]);
+  }, [adoptAuthDetails, runSync, update]);
 
   useEffect(() => {
     if (!ready) return;
@@ -150,13 +205,16 @@ export function AppProvider({ children }: PropsWithChildren) {
     if (ready && snapshot.onboarded) void runSync().catch(() => undefined);
   }, [ready, snapshot.onboarded, snapshot.authState, snapshot.backupNetwork, runSync]);
 
-  const update = useCallback((recipe: (current: AppSnapshot) => AppSnapshot) => {
-    setSnapshot((current) => {
-      const next = recipe(current);
-      latest.current = next;
-      return next;
-    });
-  }, []);
+  useEffect(() => {
+    if (!ready || !snapshot.reports.some((report) => report.status === 'queued' || report.status === 'running')) return;
+    // Report generation happens in the local worker after upload. Refresh the
+    // hydrated report while the app is open so Gallery changes from queued to
+    // ready without making the user repeatedly press Synchronize.
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') void runSync().catch(() => undefined);
+    }, 8_000);
+    return () => clearInterval(timer);
+  }, [ready, snapshot.reports, runSync]);
 
   useEffect(() => {
     if (!ready) return;
@@ -177,11 +235,10 @@ export function AppProvider({ children }: PropsWithChildren) {
   const sealCurrentNight = useCallback(async (durationSec: number, localUri?: string) => {
     const sealedIndex = nextCurrentNight(latest.current).index;
     const next = await sealNightLocally(latest.current, { durationSec, temporaryUri: localUri });
-    latest.current = next;
-    setSnapshot(next);
+    update(() => next);
     void runSync().catch(() => undefined);
     return [7, 30, 60, 90].includes(sealedIndex);
-  }, [runSync]);
+  }, [runSync, update]);
 
   const loadDemo = useCallback((mode: DemoMode) => {
     if (!__DEV__ || process.env.EXPO_PUBLIC_APP_ENV === 'production') return;
@@ -214,6 +271,32 @@ export function AppProvider({ children }: PropsWithChildren) {
     update((current) => ({ ...current, onboarded: true, accessTier: 'paid30', currentChapter: chapter, reports, demoMode: mode }));
   }, [update]);
 
+  /**
+   * Development only: pull the whole schedule back one day so the next night
+   * falls on today and can be recorded immediately.
+   *
+   * A night is unlocked by `expectedLocalDate === today` (see
+   * `reconcileChapter`), so there is no flag to flip — the dates themselves are
+   * the gate. Moving them is also the honest simulation: it exercises the same
+   * reconciliation a real overnight goes through, including the rule that an
+   * unrecorded night whose date has passed becomes `missed` rather than being
+   * silently carried forward. Seal tonight before advancing, or watch it lapse.
+   */
+  const advanceOneNight = useCallback(() => {
+    if (!__DEV__ || process.env.EXPO_PUBLIC_APP_ENV === 'production') return;
+    update((current) => reconcileSnapshot({
+      ...current,
+      currentChapter: {
+        ...current.currentChapter,
+        startedAt: new Date(Date.parse(current.currentChapter.startedAt) - 86_400_000).toISOString(),
+        nights: current.currentChapter.nights.map((night) => ({
+          ...night,
+          expectedLocalDate: addLocalDays(night.expectedLocalDate, -1),
+        })),
+      },
+    }));
+  }, [update]);
+
   const resetEverything = useCallback(async (remote = false) => {
     if (remote) await requestRemoteDeletion();
     else await clearLocalCloudSession();
@@ -224,9 +307,8 @@ export function AppProvider({ children }: PropsWithChildren) {
       const session = await ensureAnonymousSession();
       next = { ...next, ownerId: session.userId ?? undefined, email: session.email, authState: session.state };
     } catch { /* A new local-only identity can be established later when the network returns. */ }
-    latest.current = next;
-    setSnapshot(next);
-  }, []);
+    update(() => next);
+  }, [update]);
 
   const recordedCount = snapshot.currentChapter.nights.filter(isRecorded).length;
   const currentNight = nextCurrentNight(snapshot);
@@ -241,15 +323,18 @@ export function AppProvider({ children }: PropsWithChildren) {
     setIntentions: (intentions) => update((current) => ({ ...current, intentions })),
     finishOnboarding: (notificationsEnabled) => update((current) => ({ ...current, onboarded: true, notificationsEnabled })),
     sealCurrentNight,
-    setAuthDetails: (email, displayName, ownerId) => update((current) => ({ ...current, authState: 'authenticated', email, displayName, ownerId: ownerId ?? current.ownerId })),
+    setAuthDetails: adoptAuthDetails,
     setNotificationsEnabled: (notificationsEnabled) => update((current) => ({ ...current, notificationsEnabled })),
     setGentleNudge: (gentleNudge) => update((current) => ({ ...current, gentleNudge })),
     setBackupNetwork: (backupNetwork) => update((current) => ({ ...current, backupNetwork })),
     setProcessingConsent: (processingConsentVersion) => update((current) => ({ ...current, processingConsentVersion })),
-    syncNow: runSync,
+    // A user-requested sync should retry immediately even when a previous
+    // transient failure scheduled exponential backoff.
+    syncNow,
     loadDemo,
+    advanceOneNight,
     resetEverything,
-  }), [snapshot, ready, syncing, currentNight, recordedCount, update, sealCurrentNight, runSync, loadDemo, resetEverything]);
+  }), [snapshot, ready, syncing, currentNight, recordedCount, update, sealCurrentNight, adoptAuthDetails, syncNow, loadDemo, advanceOneNight, resetEverything]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
