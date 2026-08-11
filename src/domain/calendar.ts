@@ -51,10 +51,37 @@ export function reconcileChapter(chapter: Chapter, now = new Date()): Chapter {
 
 export function reconcileSnapshot(snapshot: AppSnapshot, now = new Date()): AppSnapshot {
   const currentTimezone = timezoneName();
+  const currentChapter = reconcileChapter(snapshot.currentChapter, now);
+  const terminal = (night: Night) => night.status === 'sealed' || night.status === 'revealed' || night.status === 'missed';
+  // A purchased extension resolves the night-seven conversion checkpoint. If
+  // we considered every terminal prefix forever, extending the same chapter to
+  // 30 nights would immediately recreate `unresolvedCheckpoint: 7` after the
+  // purchase-success screen cleared it. Keep only checkpoints that can still
+  // matter for the current entitlement.
+  const relevantCheckpoints = snapshot.accessTier === 'trial'
+    ? ([7] as const)
+    : snapshot.accessTier === 'paid30'
+      ? ([30] as const)
+      : ([30, 60, 90] as const);
+  const latestCheckpoint = relevantCheckpoints
+    .filter((checkpoint) => currentChapter.nights.length >= checkpoint && currentChapter.nights.slice(0, checkpoint).every(terminal))
+    .at(-1);
+  const retainedCheckpoint = snapshot.unresolvedCheckpoint !== undefined
+    && relevantCheckpoints.includes(snapshot.unresolvedCheckpoint as never)
+    && currentChapter.nights.length >= snapshot.unresolvedCheckpoint
+    && currentChapter.nights.slice(0, snapshot.unresolvedCheckpoint).every(terminal)
+      ? snapshot.unresolvedCheckpoint
+      : undefined;
   return {
     ...snapshot,
     timezone: currentTimezone,
-    currentChapter: reconcileChapter(snapshot.currentChapter, now),
+    currentChapter,
+    // A seal is an event; a checkpoint that still needs attention is durable
+    // state. This also covers a missed seventh night, where no seal event fires.
+    // A retained checkpoint must not pin a longer journey forever. Once a
+    // later eligible checkpoint becomes terminal it is the one that needs the
+    // user's attention (30 -> 60 -> 90).
+    unresolvedCheckpoint: latestCheckpoint ?? retainedCheckpoint,
   };
 }
 

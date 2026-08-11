@@ -119,6 +119,7 @@ export function TabBar({ active, onChange }: { active: TabKey; onChange: (key: T
             </Animated.View>
             <Animated.Text
               numberOfLines={1}
+              maxFontSizeMultiplier={1.3}
               style={[
                 styles.label,
                 selected && styles.labelActive,

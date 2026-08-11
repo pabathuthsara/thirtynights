@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AlertTriangle, Check } from 'lucide-react-native';
+import { AlertTriangle, Check, X } from 'lucide-react-native';
 
 import { colors, motion, nativeAnimationDriver, radii, shadows, textStyles, weight } from '@/theme';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -19,6 +19,7 @@ export function Toast({ message, onDismiss, duration = 4200 }: {
 }) {
   const slide = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -29,6 +30,9 @@ export function Toast({ message, onDismiss, duration = 4200 }: {
       Animated.spring(slide, { toValue: 1, damping: 22, stiffness: 250, mass: 0.8, useNativeDriver: nativeAnimationDriver }).start();
     }
 
+    // Errors that may govern deletion, backup, or a purchase stay until the
+    // person dismisses them. Success confirmations can remain brief.
+    if (message.tone === 'error') return;
     const timer = setTimeout(() => {
       if (reducedMotion) {
         slide.setValue(0);
@@ -53,7 +57,8 @@ export function Toast({ message, onDismiss, duration = 4200 }: {
   return (
     <Animated.View
       accessibilityLiveRegion="polite"
-      pointerEvents="none"
+      accessibilityRole="alert"
+      pointerEvents="box-none"
       style={[
         styles.wrap,
         {
@@ -63,11 +68,22 @@ export function Toast({ message, onDismiss, duration = 4200 }: {
         },
       ]}
     >
-      <View style={styles.toast}>
+      <View style={[styles.toast, { maxHeight: Math.max(160, height - insets.top - insets.bottom - 32) }]}>
         <View style={[styles.iconWrap, { backgroundColor: message.tone === 'success' ? 'rgba(90,116,98,0.14)' : 'rgba(168,79,97,0.12)' }]}>
           <Icon size={15} strokeWidth={2.4} color={tint} />
         </View>
-        <Text style={styles.text}>{message.text}</Text>
+        <ScrollView style={styles.messageScroll} contentContainerStyle={styles.messageContent} showsVerticalScrollIndicator={false}>
+          <Text style={styles.text}>{message.text}</Text>
+        </ScrollView>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss message"
+          hitSlop={6}
+          onPress={onDismiss}
+          style={({ pressed }) => [styles.dismiss, pressed && styles.dismissPressed]}
+        >
+          <X size={17} strokeWidth={2.2} color={colors.boneDim} />
+        </Pressable>
       </View>
     </Animated.View>
   );
@@ -83,8 +99,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   toast: {
+    width: '100%',
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 11,
     maxWidth: 460,
     paddingVertical: 12,
@@ -101,11 +118,15 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 9,
   },
+  messageScroll: { flex: 1 },
+  messageContent: { paddingVertical: 10 },
   text: {
     ...textStyles.label,
     color: colors.bone,
     fontWeight: weight.medium,
-    flexShrink: 1,
   },
+  dismiss: { width: 44, height: 44, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
+  dismissPressed: { opacity: 0.55 },
 });

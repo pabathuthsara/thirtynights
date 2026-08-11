@@ -4,7 +4,7 @@ import * as Crypto from 'expo-crypto';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
 import { reconcileSnapshot } from '@/domain/calendar';
-import { defaultSnapshot, normalizeSnapshot } from '@/lib/snapshot';
+import { defaultSnapshot, normalizeSnapshot, snapshotForCloudIdentity } from '@/lib/snapshot';
 import { completeSealJournal, durableRecordingFile, persistRecording, recordingFile, sealMarkerFile, type SealRecoveryMetadata } from '@/services/audioFiles';
 import type { AppSnapshot, Chapter, Night, Report } from '@/types';
 
@@ -362,11 +362,8 @@ export async function saveLocalState(snapshot: AppSnapshot) {
   else await saveNative(snapshot);
 }
 
-/**
- * Detaches device-owned recordings from a deleted/replaced cloud identity and
- * queues them again for the new owner. The audio bytes and stamps remain local;
- * only stale server paths and report objects are discarded.
- */
+/** Switch ownership without ever assigning the previous owner's content to the
+ * new account. Hydration may populate only data the new server identity owns. */
 export async function rebindLocalCloudIdentity(
   snapshot: AppSnapshot,
   ownerId: string,
@@ -377,40 +374,8 @@ export async function rebindLocalCloudIdentity(
     return { ...snapshot, ownerId, authState, email };
   }
 
-  const currentChapter: Chapter = {
-    ...snapshot.currentChapter,
-    serverRevision: 0,
-    nights: snapshot.currentChapter.nights.map((night) => !night.recordedAt ? night : {
-      ...night,
-      status: night.status === 'revealed' ? 'sealed' as const : night.status,
-      storagePath: undefined,
-      backedUp: false,
-      backupState: night.localUri && night.checksum && night.byteSize !== undefined
-        ? authState === 'authenticated' ? 'waiting-wifi' as const : 'waiting-account' as const
-        : 'attention' as const,
-      revealAt: undefined,
-    }),
-  };
-  const next: AppSnapshot = {
-    ...snapshot,
-    ownerId,
-    authState,
-    email,
-    currentChapter,
-    reports: [],
-  };
-  const outbox: PendingOutboxInsert[] = [];
-  for (const night of currentChapter.nights) {
-    if (!night.recordedAt || !night.localUri || !night.checksum || night.byteSize === undefined) continue;
-    const payload = sealPayload(currentChapter, night);
-    outbox.push({
-      operationId: Crypto.randomUUID(),
-      entityId: night.id,
-      payload,
-      payloadHash: await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, payload),
-    });
-  }
-  await serializeNativeWrite(() => saveNativeNow(next, undefined, outbox, true));
+  const next = snapshotForCloudIdentity(snapshot, ownerId, authState, email);
+  await serializeNativeWrite(() => saveNativeNow(next, undefined, [], true));
   return next;
 }
 
@@ -449,7 +414,6 @@ export async function sealNightLocally(snapshot: AppSnapshot, params: { duration
       completedAt: completed === chapter.targetLength ? recordedAt.toISOString() : undefined,
       nights: chapter.nights.map((night) => night.id === sealed.id ? sealed : night),
     },
-    seenBackupPrompt: snapshot.seenBackupPrompt || completed >= 3,
   });
 
   if (Platform.OS === 'web') {

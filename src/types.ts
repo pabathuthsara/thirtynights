@@ -24,6 +24,40 @@ export type Night = {
 
 export type ChapterLength = 7 | 30 | 90;
 export type AccessTier = 'trial' | 'paid30' | 'paid90';
+export type ProductPlan = Extract<AccessTier, 'paid30' | 'paid90'>;
+export type ReportCheckpoint = 7 | 30 | 60 | 90;
+export type PaywallSource = 'night7_report' | 'locked_night8' | 'home_card' | 'settings_restore';
+
+export type PurchaseIntent = {
+  kind: 'purchase' | 'restore';
+  plan: ProductPlan;
+  /** Store identifier only. RevenueCat product objects are never persisted. */
+  productId?: string;
+  source: PaywallSource;
+  localizedPrice?: string;
+  returnStep: 'store-confirmation' | 'restore';
+  /** One-time continuation key. It prevents an old checkout from replaying. */
+  resumeToken: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type PurchaseVerification = {
+  plan: ProductPlan;
+  source: PaywallSource;
+  status: 'store-confirming' | 'server-verifying' | 'pending-approval' | 'failed';
+  localizedPrice?: string;
+  transactionReference?: string;
+  createdAt?: string;
+  storeConfirmedAt?: string;
+  updatedAt: string;
+};
+
+export type RestoreResult = {
+  status: 'found' | 'not-found' | 'failed';
+  store: 'app-store' | 'google-play';
+  checkedAt: string;
+};
 
 export type Chapter = {
   id: string;
@@ -80,6 +114,7 @@ export type IntentionId = 'remember' | 'hear' | 'someone' | 'habit' | 'unwind';
 export type AppSnapshot = {
   schemaVersion: 2;
   onboarded: boolean;
+  onboardingVersion: number;
   intentions?: IntentionId[];
   reminderHour: number;
   reminderMinute: number;
@@ -94,20 +129,30 @@ export type AppSnapshot = {
   accessTier: AccessTier;
   backupNetwork: 'wifi-only' | 'wifi-and-cellular';
   processingConsentVersion?: string;
+  processingConsentAcceptedAt?: string;
+  processingConsentWithdrawnAt?: string;
   currentChapter: Chapter;
   completedChapters: Chapter[];
   reports: Report[];
+  /** Set only after the first contextual setup screen has actually rendered. */
+  reportSetupPromptShownAt?: string;
+  /** A durable checkpoint surface; route state is never the only way back. */
+  unresolvedCheckpoint?: ReportCheckpoint;
   seenBackupPrompt: boolean;
+  backupPromptShownAt?: string;
+  paywallSource?: PaywallSource;
+  purchaseIntent?: PurchaseIntent;
+  purchaseVerification?: PurchaseVerification;
+  purchaseSuccessPending?: { plan: ProductPlan; verifiedAt: string };
+  restoreResult?: RestoreResult;
+  lastPurchaseInvitationAt?: string;
   appearance: 'soft-feminine-premium' | 'dark';
   demoMode?: 'empty' | 'partial' | 'complete';
 };
 
 export type RouteName =
   | 'onboarding'
-  | 'intentions'
   | 'time-picker'
-  | 'notification-primer'
-  | 'plan'
   | 'home'
   | 'question'
   | 'sealing'
@@ -120,6 +165,8 @@ export type RouteName =
   | 'popup-catalog'
   | 'dev-recordings'
   | 'paywall'
+  | 'report-setup'
+  | 'purchase-success'
   | 'auth';
 
 export type SheetId =

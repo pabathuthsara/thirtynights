@@ -129,9 +129,12 @@ export function PlanScreen({ picked, hour, minute, notificationsEnabled, freeNig
   return (
     <Screen contentStyle={styles.screen}>
       <Stagger index={0}>
-        <Text style={styles.aside}>Prepared for you</Text>
+        <Text style={styles.aside}>Your first seven nights</Text>
         <Text accessibilityRole="header" style={styles.title}>
-          Your first {freeNights} nights are ready.
+          Your first {freeNights} nights are included free.
+        </Text>
+        <Text style={styles.planIntro}>
+          No card required. Night {freeNights} brings your first reflection. After that, one payment unlocks nights {freeNights + 1}–{fullLength} in this same journey. Nothing renews.
         </Text>
       </Stagger>
 
@@ -154,8 +157,14 @@ export function PlanScreen({ picked, hour, minute, notificationsEnabled, freeNig
             </Text>
           </View>
           <Text style={styles.planThrough}>
-            Kept through {formatLongDate(plan.freeEndsOn)}, when your first reflection is due.
+            Included through {formatLongDate(plan.freeEndsOn)}, when your first reflection is due.
           </Text>
+
+          <View style={styles.offerBoundary}>
+            <Text style={styles.offerIncluded}>NIGHTS 1–{freeNights} · INCLUDED</Text>
+            <View style={styles.offerDivider} />
+            <Text style={styles.offerContinuation}>NIGHTS {freeNights + 1}–{fullLength} · ONE PAYMENT · NO RENEWAL</Text>
+          </View>
         </View>
       </Stagger>
 
@@ -217,6 +226,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 25,
     marginTop: 12,
+  },
+  planIntro: {
+    ...textStyles.bodySmall,
+    fontSize: 16,
+    lineHeight: 25,
+    marginTop: 12,
+    maxWidth: 430,
   },
 
   options: { gap: 10 },
@@ -298,6 +314,38 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 6,
     maxWidth: 280,
+  },
+  offerBoundary: {
+    width: '100%',
+    marginTop: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(190,111,124,0.22)',
+    backgroundColor: surfaces.selected,
+    alignItems: 'center',
+    gap: 8,
+  },
+  offerIncluded: {
+    ...textStyles.eyebrow,
+    color: colors.roseText,
+    fontSize: 9.5,
+    letterSpacing: 1.25,
+    textAlign: 'center',
+  },
+  offerDivider: {
+    width: 54,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.lineStrong,
+  },
+  offerContinuation: {
+    color: colors.paperInk,
+    fontFamily: typography.monoMedium,
+    fontSize: 9.5,
+    lineHeight: 15,
+    letterSpacing: 0.7,
+    textAlign: 'center',
   },
 
   sheet: {

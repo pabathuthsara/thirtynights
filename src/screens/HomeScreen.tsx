@@ -12,9 +12,11 @@ import { Sparkle } from '@/components/Sparkle';
 import { addLocalDays, localDateKey, readDateKey } from '@/domain/calendar';
 import { formatDuration, formatLongDate, formatMonth } from '@/domain/format';
 import { formatVoiceTime, isRecorded, totalVoiceSeconds } from '@/domain/stats';
+import type { ReflectionReadiness } from '@/domain/conversion';
 import { keepsakeDecorations } from '@/data/keepsakeAssets';
+import { loadCommerceProducts } from '@/services/commerce';
 import { colors, gradients, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
-import type { Night } from '@/types';
+import type { Night, PurchaseVerification } from '@/types';
 
 type HomeProps = {
   nights: Night[];
@@ -25,12 +27,18 @@ type HomeProps = {
   accessTier: 'trial' | 'paid30' | 'paid90';
   authState: 'local' | 'anonymous' | 'authenticated';
   syncing?: boolean;
+  processingConsent: boolean;
+  demoMode?: 'empty' | 'partial' | 'complete';
+  readiness: ReflectionReadiness;
+  purchaseVerification?: PurchaseVerification;
   newlyEarned?: number;
   reminderHour: number;
   reminderMinute: number;
   onQuestion: () => void;
   onSettings: () => void;
   onPaywall: () => void;
+  onReportSetup: () => void;
+  onReport: () => void;
 };
 
 function formatClock(hour: number, minute: number) {
@@ -40,8 +48,9 @@ function formatClock(hour: number, minute: number) {
 }
 
 export function HomeScreen({
-  nights, recordedCount, currentNight, targetLength, accessThrough, accessTier, authState, syncing, newlyEarned,
-  reminderHour, reminderMinute, onQuestion, onSettings, onPaywall,
+  nights, recordedCount, currentNight, targetLength, accessThrough, accessTier, authState, syncing, processingConsent, demoMode,
+  readiness, purchaseVerification, newlyEarned, reminderHour, reminderMinute, onQuestion, onSettings, onPaywall,
+  onReportSetup, onReport,
 }: HomeProps) {
   const [detail, setDetail] = useState<Night | null>(null);
   const [boardHeight, setBoardHeight] = useState(0);
@@ -50,6 +59,7 @@ export function HomeScreen({
   // A slow clock so the anticipation copy and the dusk dress stay current
   // without the screen ever visibly ticking.
   const [now, setNow] = useState(() => new Date());
+  const [offerPrice, setOfferPrice] = useState<string>();
   useEffect(() => {
     const tick = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(tick);
@@ -59,16 +69,23 @@ export function HomeScreen({
   // through the small hours) — the app knows what time it is.
   const dusk = now.getHours() >= reminderHour || now.getHours() < 5;
 
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
   const deviceWidth = Math.min(width, 520);
   const usableHeight = Math.max(1, height - insets.top - insets.bottom);
+  const journeyTotal = accessTier === 'trial' ? 30 : targetLength;
 
   // Re-tuned so a normal phone gets the full-fidelity layout. The old
   // thresholds (860 / 700) put every mainstream device into "compact".
-  const compact = usableHeight < 680 || deviceWidth < 360;
-  const dense = usableHeight < 580 || deviceWidth < 330;
+  const compact = usableHeight < 680 || deviceWidth < 360 || fontScale > 1.2;
+  const dense = usableHeight < 580 || deviceWidth < 330 || fontScale > 1.6;
+  // NightStrip's labels respect Dynamic Type. Let the already-scrollable Home
+  // page grow with them instead of forcing a large caption stack into the old
+  // fixed 244-point dense frame (which overlapped the statistics at 200–300%).
+  const baseBoardBudget = dense ? 244 : compact ? 292 : Math.min(390, Math.round(usableHeight * 0.44));
+  const scaledBoardFloor = Math.min(390, Math.round(244 + Math.max(0, fontScale - 1) * 44));
+  const boardBudget = Math.max(baseBoardBudget, scaledBoardFloor);
 
   // The strip scrolls the whole chapter, so the thirty-night pager the board
   // needed is gone: there is nothing left to page between.
@@ -77,13 +94,22 @@ export function HomeScreen({
   const chapterClosed = chapterNights
     .every((night) => night.status === 'sealed' || night.status === 'revealed' || night.status === 'missed');
   const trialEnded = accessTier === 'trial' && chapterClosed;
-  const canRecord = currentNight.status === 'today' && !trialEnded && !chapterClosed;
+  const canRecord = !demoMode && currentNight.status === 'today' && !trialEnded && !chapterClosed;
 
-  const unbackedCount = nights.filter((night) => isRecorded(night) && night.backedUp === false).length;
+  const unbackedCount = nights.filter((night) => isRecorded(night) && !night.backedUp).length;
   const missedCount = nights.filter((night) => night.status === 'missed').length;
   const sealedToday = currentNight.status === 'sealed' || currentNight.status === 'revealed';
 
-  const status = unbackedCount
+  useEffect(() => {
+    if (!trialEnded) return;
+    loadCommerceProducts()
+      .then((products) => setOfferPrice(products.find((product) => product.plan === 'paid30')?.localizedPrice))
+      .catch(() => undefined);
+  }, [trialEnded]);
+
+  const status = demoMode
+    ? { tone: colors.brassText, icon: CloudOff, copy: 'Developer preview · cloud backup is off.' }
+    : unbackedCount
     ? { tone: colors.brassText, icon: CloudOff, copy: `${unbackedCount} ${unbackedCount === 1 ? 'night is' : 'nights are'} waiting to back up.` }
     : syncing
       ? { tone: colors.brassText, icon: RefreshCw, copy: 'Tucking everything away…' }
@@ -94,7 +120,32 @@ export function HomeScreen({
   const card = useMemo(() => {
     // The three states that ask for something keep the fuller note: they carry a
     // call to action, and the sentence under the label is what justifies it.
-    if (trialEnded) return { variant: 'note' as const, label: 'Continue your keepsake', copy: 'Your first seven nights are safe. Choose how long the story continues.', action: onPaywall, cta: 'See the chapters', art: 'journal' as const };
+    if (demoMode) return {
+      variant: 'note' as const,
+      label: 'Developer preview · local only',
+      copy: 'This visual preview is detached from your real journey. Recording and cloud backup are turned off here.',
+      action: onSettings,
+      cta: 'Open preview settings',
+      art: 'journal' as const,
+    };
+    if (purchaseVerification) return {
+      variant: 'note' as const,
+      label: 'Purchase received',
+      copy: purchaseVerification.status === 'pending-approval'
+        ? 'Approval is pending. Nights 8–30 open automatically when the store confirms it—do not purchase again.'
+        : 'We are finishing your nights 8–30 access. This status is safe to close.',
+      action: onPaywall,
+      cta: 'Check purchase status',
+      art: 'journal' as const,
+    };
+    if (trialEnded) return {
+      variant: 'note' as const,
+      label: 'Night 8 is next · locked',
+      copy: `Unlock nights 8–30 and your full night-30 reflection${offerPrice ? ` for ${offerPrice} once` : ' with one payment'}. Nothing renews.`,
+      action: onPaywall,
+      cta: offerPrice ? `Unlock nights 8–30 — ${offerPrice}` : 'Unlock nights 8–30',
+      art: 'journal' as const,
+    };
     if (chapterClosed) return { variant: 'note' as const, label: 'This chapter is complete', copy: 'Your next collection is ready whenever you are.', action: onPaywall, cta: 'Begin the next thirty', art: 'journal' as const };
     if (canRecord) return { variant: 'note' as const, label: "Tonight's question", copy: 'A sealed question is waiting for you.', action: onQuestion, cta: 'Open tonight’s letter', art: 'seal' as const };
     // A night unlocks on its date and stays open for the whole of it — the
@@ -126,7 +177,58 @@ export function HomeScreen({
       detail: `Night ${currentNight.index} opens ${soon}. ${reminder}`,
       art: 'seal' as const,
     };
-  }, [canRecord, chapterClosed, currentNight.expectedLocalDate, currentNight.index, currentNight.status, now, onPaywall, onQuestion, reminderHour, reminderMinute, sealedToday, targetLength, trialEnded]);
+  }, [canRecord, chapterClosed, currentNight.expectedLocalDate, currentNight.index, currentNight.status, demoMode, now, offerPrice, onPaywall, onQuestion, onSettings, purchaseVerification, reminderHour, reminderMinute, sealedToday, targetLength, trialEnded]);
+
+  const reflectionCard = useMemo(() => {
+    if (demoMode) return null;
+    if (!readiness.recordedCount) return null;
+    const firstReflection = readiness.checkpoint === 7;
+    const reflectionLabel = firstReflection ? 'Your first reflection' : `Your night-${readiness.checkpoint} reflection`;
+    if (readiness.state === 'ready') return {
+      label: `${reflectionLabel} is ready`,
+      copy: `${firstReflection ? 'Seven' : readiness.checkpoint} nights have become something you can read and hear.`,
+      cta: 'Open reflection',
+      action: onReport,
+      tone: 'ready' as const,
+    };
+    if (readiness.state === 'processing') return {
+      label: `${reflectionLabel} is taking shape`,
+      copy: 'Processing continues safely if you close the app.',
+      cta: 'View progress',
+      action: onReport,
+      tone: 'ready' as const,
+    };
+    if (readiness.state === 'prepared') return {
+      label: firstReflection && readiness.recordedCount === 6
+        ? 'Your first reflection arrives tomorrow'
+        : `${reflectionLabel} is prepared`,
+      copy: `${readiness.backedUpCount} ${readiness.backedUpCount === 1 ? 'night is' : 'nights are'} securely ready.`,
+      cta: 'Review setup',
+      action: onReportSetup,
+      tone: 'ready' as const,
+    };
+    if (readiness.state === 'failed') return {
+      label: `${reflectionLabel} needs attention`,
+      copy: 'Your recordings remain safe. Open the checkpoint to retry.',
+      cta: 'Open checkpoint',
+      action: onReport,
+      tone: 'attention' as const,
+    };
+    const step = authState !== 'authenticated'
+      ? 'Create an account'
+      : !processingConsent
+        ? 'Processing permission is still needed'
+        : readiness.state === 'attention'
+          ? 'A backup needs another try'
+          : `${readiness.unbackedCount} ${readiness.unbackedCount === 1 ? 'night is' : 'nights are'} waiting to back up`;
+    return {
+      label: `${reflectionLabel} needs setup`,
+      copy: `${readiness.recordedCount} ${readiness.recordedCount === 1 ? 'night saved' : 'nights saved'} on this phone · ${step}.`,
+      cta: 'Finish setup',
+      action: onReportSetup,
+      tone: 'attention' as const,
+    };
+  }, [authState, demoMode, onReport, onReportSetup, processingConsent, readiness]);
 
   const closeSheet = () => {
     setDetail(null);
@@ -144,11 +246,11 @@ export function HomeScreen({
   };
 
   return (
-    <Screen scroll={false} tabbed variant={dusk ? 'dusk' : 'day'} contentStyle={[styles.screen, dense && styles.denseScreen]}>
+    <Screen tabbed variant={dusk ? 'dusk' : 'day'} contentStyle={[styles.screen, dense && styles.denseScreen]}>
       <Stagger index={0}>
         <AppHeader
           compact={compact}
-          label={`NIGHT ${Math.min(currentNight.index, accessThrough)} OF ${targetLength}`}
+          label={`NIGHT ${Math.min(currentNight.index, accessThrough)} OF ${journeyTotal}`}
           onSettings={onSettings}
         />
       </Stagger>
@@ -195,7 +297,7 @@ export function HomeScreen({
             screen and never from the strip inside it — measuring it here cannot
             feed back into itself. The strip needs the number: without it the
             cards were silently squashed and clipped their own last line. */}
-        <View style={styles.boardFrame} onLayout={measureBoard}>
+        <View style={[styles.boardFrame, { height: boardBudget }]} onLayout={measureBoard}>
           <NightStrip
             nights={chapterNights}
             canRecord={canRecord}
@@ -215,7 +317,7 @@ export function HomeScreen({
           </View>
           <View style={styles.statDivider} />
           <View style={styles.stat}>
-            <Text style={styles.statValue}>{Math.max(0, targetLength - recordedCount)}</Text>
+            <Text style={styles.statValue}>{Math.max(0, journeyTotal - recordedCount)}</Text>
             <Text style={styles.statLabel}>nights ahead</Text>
           </View>
         </View>
@@ -284,7 +386,6 @@ export function HomeScreen({
           <View style={styles.questionCopy}>
             <Text numberOfLines={2} style={styles.questionLabel}>{card.label}</Text>
             <Text
-              numberOfLines={compact ? 3 : 4}
               style={[styles.questionText, compact && styles.compactQuestionText, dense && styles.denseQuestionText]}
             >
               {card.copy}
@@ -301,10 +402,39 @@ export function HomeScreen({
         )}
       </Stagger>
 
-      <Stagger index={4}>
+      {reflectionCard ? (
+        <Stagger index={4}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${reflectionCard.label}. ${reflectionCard.copy}. ${reflectionCard.cta}`}
+            onPress={reflectionCard.action}
+            style={({ pressed }) => [
+              styles.readinessCard,
+              reflectionCard.tone === 'ready' ? styles.readinessReady : styles.readinessAttention,
+              pressed && styles.questionPressed,
+            ]}
+          >
+            <View style={styles.readinessIcon}>
+              {reflectionCard.tone === 'ready'
+                ? <Cloud size={17} strokeWidth={2} color={colors.mossText} />
+                : <CloudOff size={17} strokeWidth={2} color={colors.brassText} />}
+            </View>
+            <View style={styles.readinessCopy}>
+              <Text style={styles.readinessTitle}>{reflectionCard.label}</Text>
+              <Text style={styles.readinessBody}>{reflectionCard.copy}</Text>
+              <View style={styles.readinessCtaRow}>
+                <Text style={styles.readinessCta}>{reflectionCard.cta}</Text>
+                <ChevronRight size={14} strokeWidth={2.4} color={colors.roseText} />
+              </View>
+            </View>
+          </Pressable>
+        </Stagger>
+      ) : null}
+
+      <Stagger index={5}>
         <View style={styles.statusRow}>
           <status.icon size={15} strokeWidth={1.9} color={status.tone} />
-          <Text numberOfLines={2} style={[styles.status, { color: status.tone }]}>{status.copy}</Text>
+          <Text style={[styles.status, { color: status.tone }]}>{status.copy}</Text>
         </View>
       </Stagger>
 
@@ -335,7 +465,7 @@ function nightSheetBody(night: Night) {
   }
   if (night.status === 'sealed') {
     const length = night.durationSec ? ` It runs ${formatDuration(night.durationSec)}.` : '';
-    const backup = night.backedUp === false ? ' It is still waiting to back up.' : '';
+    const backup = !night.backedUp ? ' It is still waiting to back up.' : '';
     return `Recorded on ${date}.${length} It stays tucked away until its next reflection checkpoint, then joins your Gallery.${backup}`;
   }
   if (night.status === 'revealed') {
@@ -354,7 +484,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 0,
     paddingBottom: 16,
-    gap: 10,
+    gap: 12,
   },
   denseScreen: {
     paddingHorizontal: 14,
@@ -423,13 +553,11 @@ const styles = StyleSheet.create({
   // kept its size when the note below grew and pushed the navigation off the
   // bottom of the screen.
   boardSlot: {
-    flex: 1,
-    flexShrink: 1,
-    minHeight: 0,
     justifyContent: 'center',
   },
   boardFrame: {
-    flex: 1,
+    flexGrow: 0,
+    flexShrink: 0,
     justifyContent: 'center',
   },
   /** The chapter stated once, in numbers the heading above does not already
@@ -596,6 +724,7 @@ const styles = StyleSheet.create({
   questionCopy: {
     alignSelf: 'center',
     alignItems: 'center',
+    width: '100%',
     maxWidth: 300,
     gap: 6,
   },
@@ -625,15 +754,66 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'stretch',
     gap: 3,
     marginTop: 4,
   },
   cta: {
+    minWidth: 0,
+    flexShrink: 1,
     color: colors.roseText,
     fontFamily: typography.sans,
     fontWeight: weight.semibold,
     fontSize: 13,
     letterSpacing: 0.2,
+    textAlign: 'center',
+  },
+
+  readinessCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 15,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+  },
+  readinessReady: {
+    backgroundColor: surfaces.success,
+    borderColor: 'rgba(90,116,98,0.25)',
+  },
+  readinessAttention: {
+    backgroundColor: '#FFF8EB',
+    borderColor: 'rgba(184,134,53,0.28)',
+  },
+  readinessIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  readinessCopy: { flex: 1, minWidth: 0 },
+  readinessTitle: {
+    color: colors.bone,
+    fontFamily: typography.serifMedium,
+    fontSize: 16,
+    lineHeight: 21,
+  },
+  readinessBody: {
+    ...textStyles.caption,
+    fontSize: 12.5,
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  readinessCtaRow: { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 7 },
+  readinessCta: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.roseText,
+    fontFamily: typography.sans,
+    fontWeight: weight.semibold,
+    fontSize: 13,
   },
 
   statusRow: {

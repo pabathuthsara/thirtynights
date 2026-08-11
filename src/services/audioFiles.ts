@@ -78,6 +78,16 @@ export function deleteAllRecordings() {
   if (directory.exists) directory.delete();
 }
 
+/** Delete only one explicitly selected chapter's local audio. */
+export function deleteChapterRecordings(chapterId: string) {
+  if (Platform.OS === 'web') return;
+  // Chapter identifiers originate from our snapshot/server, but keep the
+  // filesystem target single-segment even if a corrupt preview reaches here.
+  if (!/^[a-zA-Z0-9-]+$/.test(chapterId)) throw new Error('The preview recording folder could not be verified.');
+  const directory = new Directory(Paths.document, 'recordings', chapterId);
+  if (directory.exists) directory.delete();
+}
+
 export function recordingFile(uri?: string) {
   if (!uri || Platform.OS === 'web') return null;
   const file = new File(uri);

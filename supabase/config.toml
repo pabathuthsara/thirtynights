@@ -56,5 +56,17 @@ enabled = true
 policy = "per_worker"
 inspector_port = 8083
 
+# Keep deploy-time authentication deterministic. Account functions require a
+# Supabase user JWT at the gateway; RevenueCat cannot provide one, so its
+# webhook authenticates the raw request itself with bearer + HMAC secrets.
+[functions.delete-account]
+verify_jwt = true
+
+[functions.apple-identity]
+verify_jwt = true
+
+[functions.revenuecat-webhook]
+verify_jwt = false
+
 [analytics]
 enabled = false

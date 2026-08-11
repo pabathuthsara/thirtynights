@@ -39,6 +39,20 @@ Deno.serve(async (request) => {
   const { data: deletion, error: deletionError } = await service.from('deletion_requests').insert({ user_id: userId, user_hash: userHash, status: 'processing' }).select('id').single();
   if (deletionError) return Response.json({ error: 'deletion_audit_failed' }, { status: 500 });
 
+  // RevenueCat can retain an app-user record even when no store transaction
+  // completed. Do not partially delete the account (or revoke its Apple token)
+  // until the server credential needed to remove that processor-side record is
+  // present. The explicit 503 lets the client explain that nothing was deleted
+  // and gives operations a precise configuration error to alert on.
+  const revenueCatKey = Deno.env.get('REVENUECAT_SECRET_API_KEY');
+  if (!revenueCatKey) {
+    await service.from('deletion_requests')
+      .update({ status: 'failed', error_code: 'revenuecat_delete_not_configured' })
+      .eq('id', deletion.id);
+    console.error('account_deletion_blocked', 'revenuecat_delete_not_configured');
+    return Response.json({ error: 'revenuecat_delete_not_configured' }, { status: 503 });
+  }
+
   try {
     // Apple first. Guideline 5.1.1(v) requires that deleting an account revokes
     // the tokens Apple issued, and once `auth.admin.deleteUser` runs the
@@ -48,8 +62,6 @@ Deno.serve(async (request) => {
     if (appleTokenError) throw appleTokenError;
     if (appleToken) await revokeRefreshToken(appleToken as string);
 
-    const revenueCatKey = Deno.env.get('REVENUECAT_SECRET_API_KEY');
-    if (!revenueCatKey) throw new Error('revenuecat_delete_not_configured');
     const revenueCatResponse = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${revenueCatKey}`, 'Content-Type': 'application/json' },
     });

@@ -78,12 +78,23 @@ function ChapterCover({ chapter, reports, width, onReport, onPlayNight }: {
   );
 }
 
-export function GalleryScreen({ current, completed, reports, onSettings, onReport, onPlayNight }: {
+export function GalleryScreen({
+  current,
+  completed,
+  reports,
+  unresolvedCheckpoint,
+  onSettings,
+  onReport,
+  onCheckpoint,
+  onPlayNight,
+}: {
   current: Chapter;
   completed: Chapter[];
   reports: Report[];
+  unresolvedCheckpoint?: 7 | 30 | 60 | 90;
   onSettings: () => void;
   onReport: (reportId: string, chapterId: string) => void;
+  onCheckpoint?: () => void;
   onPlayNight: (chapter: Chapter, night: Night) => void;
 }) {
   const { width } = useWindowDimensions();
@@ -92,9 +103,24 @@ export function GalleryScreen({ current, completed, reports, onSettings, onRepor
   // cover breathe there, then switch to two columns once both can remain wide.
   const coverWidth = contentWidth < 390 ? contentWidth : Math.min(230, (contentWidth - 16) / 2);
   const recorded = current.nights.filter(isRecorded).length;
+  const journeyTotal = current.targetLength === 7 ? 30 : current.targetLength;
   const chapterReports = reports
     .filter((report) => report.chapterId === current.id)
     .sort((a, b) => a.checkpointNight - b.checkpointNight);
+  const checkpointRows: Array<
+    { kind: 'report'; report: Report }
+    | { kind: 'unresolved'; checkpointNight: 7 | 30 | 60 | 90 }
+  > = chapterReports.map((report) => ({ kind: 'report', report }));
+  if (
+    unresolvedCheckpoint !== undefined
+    && !chapterReports.some((report) => report.checkpointNight === unresolvedCheckpoint)
+  ) {
+    checkpointRows.push({ kind: 'unresolved', checkpointNight: unresolvedCheckpoint });
+    checkpointRows.sort((a, b) => (
+      (a.kind === 'report' ? a.report.checkpointNight : a.checkpointNight)
+      - (b.kind === 'report' ? b.report.checkpointNight : b.checkpointNight)
+    ));
+  }
 
   // No back arrow and no segmented toggle: the tab bar below is now the one
   // place this app changes rooms, and two navigations competing for the same
@@ -121,7 +147,7 @@ export function GalleryScreen({ current, completed, reports, onSettings, onRepor
           <View style={styles.currentStats}>
             <View style={styles.currentStat}>
               <Text style={styles.currentStatValue}>{recorded}</Text>
-              <Text style={styles.currentStatLabel}>of {current.targetLength} nights</Text>
+              <Text style={styles.currentStatLabel}>of {journeyTotal}-night journey</Text>
             </View>
             <View style={styles.currentDivider} />
             <View style={styles.currentStat}>
@@ -132,30 +158,58 @@ export function GalleryScreen({ current, completed, reports, onSettings, onRepor
         </View>
       </Stagger>
 
-      {chapterReports.length ? (
+      {checkpointRows.length ? (
         <Stagger index={3}>
           <Text style={styles.sectionLabel}>Report checkpoints</Text>
           <View style={styles.shelf}>
-            {chapterReports.map((report, index) => (
-              <Pressable
-                key={report.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Night ${report.checkpointNight} report, ${reportStatusLabel(report.status)}`}
-                onPress={() => onReport(report.id, current.id)}
-                style={({ pressed }) => [
-                  styles.shelfRow,
-                  index === chapterReports.length - 1 && styles.lastRow,
-                  pressed && styles.pressedRow,
-                ]}
-              >
-                <View style={[styles.shelfDot, report.status === 'ready' && styles.shelfDotReady]} />
-                <Text style={styles.shelfNight}>Night {report.checkpointNight}</Text>
-                <Text style={[styles.shelfStatus, report.status === 'ready' && styles.shelfStatusReady]}>
-                  {reportStatusLabel(report.status)}
-                </Text>
-                <ChevronRight size={16} strokeWidth={2} color={colors.boneFaint} />
-              </Pressable>
-            ))}
+            {checkpointRows.map((entry, index) => {
+              const last = index === checkpointRows.length - 1;
+              if (entry.kind === 'unresolved') {
+                return (
+                  <Pressable
+                    key={`unresolved-${entry.checkpointNight}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Night ${entry.checkpointNight}, setup/progress needed`}
+                    accessibilityHint="Opens the reflection setup and progress screen"
+                    onPress={() => onCheckpoint?.()}
+                    style={({ pressed }) => [
+                      styles.shelfRow,
+                      last && styles.lastRow,
+                      pressed && styles.pressedRow,
+                    ]}
+                  >
+                    <View style={[styles.shelfDot, styles.shelfDotAttention]} />
+                    <Text style={styles.shelfNight}>Night {entry.checkpointNight}</Text>
+                    <Text style={[styles.shelfStatus, styles.shelfStatusAttention]}>
+                      setup/progress needed
+                    </Text>
+                    <ChevronRight size={16} strokeWidth={2} color={colors.roseText} />
+                  </Pressable>
+                );
+              }
+
+              const { report } = entry;
+              return (
+                <Pressable
+                  key={report.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Night ${report.checkpointNight} report, ${reportStatusLabel(report.status)}`}
+                  onPress={() => onReport(report.id, current.id)}
+                  style={({ pressed }) => [
+                    styles.shelfRow,
+                    last && styles.lastRow,
+                    pressed && styles.pressedRow,
+                  ]}
+                >
+                  <View style={[styles.shelfDot, report.status === 'ready' && styles.shelfDotReady]} />
+                  <Text style={styles.shelfNight}>Night {report.checkpointNight}</Text>
+                  <Text style={[styles.shelfStatus, report.status === 'ready' && styles.shelfStatusReady]}>
+                    {reportStatusLabel(report.status)}
+                  </Text>
+                  <ChevronRight size={16} strokeWidth={2} color={colors.boneFaint} />
+                </Pressable>
+              );
+            })}
           </View>
         </Stagger>
       ) : null}
@@ -192,6 +246,13 @@ export function GalleryScreen({ current, completed, reports, onSettings, onRepor
 /* ----------------------------------------------------------------- LightMap */
 
 const WEEKDAY_START = 0; // Sunday-first, matching Date.getDay().
+const MONTH_CELL_GAP = 3;
+const MONTH_COLUMN_GAP = 12;
+const MONTH_CARD_HORIZONTAL_PADDING = 7;
+const MONTH_CARD_BORDER_WIDTH = 1;
+const MIN_MONTH_CELL = 28;
+const MAX_MONTH_CELL = 44;
+const MAX_SINGLE_MONTH_SIZE = 7 * MAX_MONTH_CELL + 6 * MONTH_CELL_GAP;
 
 function monthMatrix(year: number, month: number) {
   const first = new Date(year, month, 1, 12);
@@ -215,11 +276,16 @@ function MonthCard({ year, month, size, recordedByDate, onPickNight }: {
     () => new Intl.DateTimeFormat(deviceLocale(), { month: 'short' }).format(new Date(year, month, 1)),
     [month, year],
   );
-  const cell = (size - 6 * 3) / 7;
+  const cell = (size - 6 * MONTH_CELL_GAP) / 7;
   const today = localDateKey();
 
   return (
-    <View style={[styles.monthCard, { width: size + 20 }]}>
+    <View
+      style={[
+        styles.monthCard,
+        { width: size + 2 * (MONTH_CARD_HORIZONTAL_PADDING + MONTH_CARD_BORDER_WIDTH) },
+      ]}
+    >
       <Text style={styles.monthLabel}>{label.toUpperCase()}</Text>
       <View style={[styles.monthGrid, { width: size }]}>
         {cells.map((date, index) => {
@@ -251,14 +317,13 @@ function MonthCard({ year, month, size, recordedByDate, onPickNight }: {
               accessibilityRole="button"
               accessibilityLabel={`${formatLongDate(date)}, night ${night.index} recorded`}
               onPress={() => onPickNight(night, date)}
-              hitSlop={3}
-              style={({ pressed }) => [pressed && styles.pressedCell]}
+              style={({ pressed }) => [styles.calendarCellButton, { width: cell, height: cell }, pressed && styles.pressedCell]}
             >
               <LinearGradient
                 colors={[from, to]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={[styles.litCell, { width: cell, height: cell, borderRadius: Math.max(3, cell * 0.32) }]}
+                style={[styles.litCell, { borderRadius: Math.max(3, cell * 0.32) }]}
               />
             </Pressable>
           );
@@ -272,7 +337,7 @@ export function LightMapScreen({ chapters, onSettings }: {
   chapters: Chapter[];
   onSettings: () => void;
 }) {
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
   const [picked, setPicked] = useState<{ night: Night; date: Date } | null>(null);
   const year = new Date().getFullYear();
   const nights = useMemo(() => chapters.flatMap((chapter) => chapter.nights), [chapters]);
@@ -282,9 +347,26 @@ export function LightMapScreen({ chapters, onSettings }: {
   const completedChapters = chapters.filter((chapter) => Boolean(chapter.completedAt)).length;
 
   const contentWidth = Math.min(width, 520) - 48;
-  // Two months per row, weekday-aligned. The old view was 365 dots at 6px in
-  // rows of 53 consecutive days — no weekday alignment and nothing readable.
-  const monthSize = Math.floor((contentWidth - 12) / 2) - 20;
+  const stackStats = width < 360 || fontScale > 1.4;
+  // Phone calendars use the full reading column. Keeping two columns on a
+  // 320–430pt phone made each date a 13–25pt target and `hitSlop` caused adjacent
+  // dates to overlap. At the app's 520pt device cap, two 230pt leaves fit exactly
+  // and retain 28pt cells, so the wider keepsake spread still feels intentional.
+  const twoMonthColumns = contentWidth >= (
+    2 * (
+      7 * MIN_MONTH_CELL
+      + 6 * MONTH_CELL_GAP
+      + 2 * (MONTH_CARD_HORIZONTAL_PADDING + MONTH_CARD_BORDER_WIDTH)
+    )
+    + MONTH_COLUMN_GAP
+  );
+  const monthSize = twoMonthColumns
+    ? Math.floor((contentWidth - MONTH_COLUMN_GAP) / 2)
+      - 2 * (MONTH_CARD_HORIZONTAL_PADDING + MONTH_CARD_BORDER_WIDTH)
+    : Math.min(
+      MAX_SINGLE_MONTH_SIZE,
+      contentWidth - 2 * (MONTH_CARD_HORIZONTAL_PADDING + MONTH_CARD_BORDER_WIDTH),
+    );
 
   // Only the months that can actually hold light: from the first recorded
   // night of this year through the current month. A wall of ten empty grids
@@ -312,17 +394,17 @@ export function LightMapScreen({ chapters, onSettings }: {
           {/* Minutes of voice is the number that matters — it is the keepsake
               itself. Streaks and completion only appear once they mean
               something; "Completion 100%" beside an empty year read as false. */}
-          <View style={styles.statsRow}>
+          <View style={[styles.statsRow, stackStats && styles.statsColumn]}>
             <View style={styles.stat}>
               <Text style={styles.statNumber}>{formatVoiceTime(totalVoiceSeconds(nights))}</Text>
               <Text style={styles.statLabel}>of your voice, kept</Text>
             </View>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, stackStats && styles.statDividerHorizontal]} />
             <View style={styles.stat}>
               <Text style={styles.statNumber}>{recorded.length}</Text>
               <Text style={styles.statLabel}>{recorded.length === 1 ? 'night recorded' : 'nights recorded'}</Text>
             </View>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, stackStats && styles.statDividerHorizontal]} />
             <View style={styles.stat}>
               <Text style={styles.statNumber}>{streak.current}</Text>
               <Text style={styles.statLabel}>{streak.current === 1 ? 'night running' : 'nights running'}</Text>
@@ -351,7 +433,7 @@ export function LightMapScreen({ chapters, onSettings }: {
         </View>
 
         {recorded.length ? (
-          <View style={styles.monthGridWrap}>
+          <View style={[styles.monthGridWrap, !twoMonthColumns && styles.monthGridSingle]}>
             {visibleMonths.map((month) => (
               <MonthCard
                 key={month}
@@ -391,9 +473,9 @@ export function LightMapScreen({ chapters, onSettings }: {
             style={styles.legendSweep}
           />
           <View style={styles.legendLabels}>
-            <Text style={styles.legendLabel}>Early evening</Text>
+            <Text style={[styles.legendLabel, styles.legendStart]}>Early evening</Text>
             <Text style={styles.legendLabel}>Midnight</Text>
-            <Text style={styles.legendLabel}>Dawn</Text>
+            <Text style={[styles.legendLabel, styles.legendEnd]}>Dawn</Text>
           </View>
         </View>
       </Stagger>
@@ -474,6 +556,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     minHeight: 58,
+    paddingVertical: 8,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.line,
@@ -481,9 +564,11 @@ const styles = StyleSheet.create({
   lastRow: { borderBottomWidth: 0 },
   shelfDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.lineStrong },
   shelfDotReady: { backgroundColor: colors.moss },
+  shelfDotAttention: { backgroundColor: colors.brass },
   shelfNight: { flex: 1, color: colors.bone, fontFamily: typography.serifMedium, fontSize: 16 },
-  shelfStatus: { ...textStyles.caption, color: colors.boneFaint },
+  shelfStatus: { ...textStyles.caption, color: colors.boneFaint, flexShrink: 1, textAlign: 'right' },
   shelfStatusReady: { color: colors.mossText, fontWeight: weight.semibold },
+  shelfStatusAttention: { color: colors.roseText, fontWeight: weight.semibold },
 
   coverGrid: {
     flexDirection: 'row',
@@ -520,7 +605,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 10,
     paddingHorizontal: 4,
-    minHeight: 34,
+    minHeight: 44,
   },
   coverActionLabel: { flex: 1, color: colors.roseText, fontFamily: typography.sans, fontWeight: weight.semibold, fontSize: 13 },
   coverLocked: { ...textStyles.caption, color: colors.boneFaint },
@@ -566,8 +651,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
   },
   statsRow: { flexDirection: 'row', alignItems: 'center' },
-  stat: { flex: 1, alignItems: 'center' },
+  statsColumn: { flexDirection: 'column', alignItems: 'stretch', gap: 12 },
+  stat: { flex: 1, minWidth: 0, alignItems: 'center' },
   statDivider: { width: 1, height: 34, backgroundColor: colors.line },
+  statDividerHorizontal: { width: '100%', height: 1 },
   statNumber: { color: colors.bone, fontFamily: typography.serifSemiBold, fontSize: 26 },
   statLabel: { ...textStyles.caption, marginTop: 4, textAlign: 'center' },
   secondaryStats: {
@@ -592,16 +679,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
+    columnGap: MONTH_COLUMN_GAP,
     rowGap: 18,
+  },
+  monthGridSingle: {
+    justifyContent: 'center',
   },
   // Album leaves, in the same warm paper as the rest of the app. Bright white
   // panels on cream made the map look like a chart pasted over the page.
   monthCard: {
     borderRadius: radii.md,
     paddingVertical: 12,
-    paddingHorizontal: 10,
+    paddingHorizontal: MONTH_CARD_HORIZONTAL_PADDING,
     backgroundColor: surfaces.paper,
-    borderWidth: 1,
+    borderWidth: MONTH_CARD_BORDER_WIDTH,
     borderColor: 'rgba(184,134,53,0.16)',
   },
   monthLabel: {
@@ -615,21 +706,24 @@ const styles = StyleSheet.create({
   monthGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 3,
+    gap: MONTH_CELL_GAP,
   },
   cellSlot: { alignItems: 'center', justifyContent: 'center' },
+  calendarCellButton: { alignItems: 'stretch', justifyContent: 'center' },
   emptyCell: { backgroundColor: 'rgba(102,67,80,0.12)' },
   todayCell: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.rose },
   // A hairline of paper light around each lit night, so the colour reads as a
   // mark set into the page rather than a flat swatch printed on it.
-  litCell: { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,253,249,0.55)' },
+  litCell: { flex: 1, alignSelf: 'stretch', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,253,249,0.55)' },
   pressedCell: { opacity: 0.6, transform: [{ scale: 0.88 }] },
 
   legendSweep: { height: 10, borderRadius: 999 },
   legendLabels: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
     marginTop: 8,
   },
-  legendLabel: { ...textStyles.caption, fontSize: 11, color: colors.boneDim },
+  legendLabel: { ...textStyles.caption, flex: 1, minWidth: 0, fontSize: 11, color: colors.boneDim, textAlign: 'center' },
+  legendStart: { textAlign: 'left' },
+  legendEnd: { textAlign: 'right' },
 });

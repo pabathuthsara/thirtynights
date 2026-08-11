@@ -1,6 +1,6 @@
 # Thirty Nights — Engineering Handover
 
-Last updated: 2026-08-03 (Asia/Colombo)
+Last updated: 2026-08-11 (Asia/Colombo)
 
 ## Current status
 
@@ -45,15 +45,22 @@ The existing repository started as a functional Expo shell with real recording, 
 
 ## Work in progress
 
-- Validating the full Supabase migration/RLS/Storage/RPC suite from zero in a Docker-backed local stack or isolated project and regenerating/diffing database types.
+- The authoritative-entitlement and server-enforced processing-consent migration has passed the full migration chain and SQL assertions in disposable PostgreSQL, but is not applied to hosted Supabase. Deploy it together with the matching worker image and updated client: the migration intentionally pauses pre-existing report jobs until their owner accepts the current disclosure.
+- The updated client contains a narrow read-only bridge for the current hosted
+  schema: if and only if PostgREST reports that the new processing-consent
+  columns do not exist, hydration preserves the already accepted local
+  disclosure so existing backups can continue during rollout. Consent grant or
+  withdrawal never falls back locally; those remain server-first and require
+  the coordinated migration.
+- Regenerating/diffing database types and repeating the migration/RLS/Storage/RPC suite in a Docker-backed local Supabase stack. Docker/Podman is not installed on this machine, so `npm run db:verify` cannot run here.
 - Completing provider-backed, signed-build, store-sandbox, and physical-device checks from `docs/RELEASE_VERIFICATION.md`.
 
 ## Owner or human intervention required
 
 These items require the legal/billing/account owner or physical-device access. Do not put secret values in this file or source control.
 
-- Apple Developer and App Store Connect enrollment, agreements, tax/banking, app record, consumable products, signing, and final submission.
-- Google Play Console enrollment, verification, app record, consumable products, testing tracks, policy declarations, and final submission.
+- Apple Developer and App Store Connect enrollment, agreements, tax/banking, app record, non-consumable products, signing, and final submission.
+- Google Play Console enrollment, verification, app record, non-consumable products, testing tracks, policy declarations, and final submission.
 - Expo/EAS organization ownership, billing, project linking, and signing authorization.
 - RevenueCat project/apps, store credential connections, public SDK keys, product/offering mapping, and webhook secret.
 - Production/staging Supabase ownership, custom SMTP, CAPTCHA, backups/PITR, and secure server secrets.
@@ -61,9 +68,10 @@ These items require the legal/billing/account owner or physical-device access. D
 - Production privacy, terms, support, and web account-deletion URLs; legal approval of privacy/safety/retention wording.
 - Final pricing/store territories, final icon and store assets, reviewed question sets/report rubric, and physical beta testers/devices.
 - Enable RevenueCat webhook HMAC signing, set a random Authorization header, and enter both values only as Supabase Function secrets named `REVENUECAT_WEBHOOK_AUTH` and `REVENUECAT_WEBHOOK_HMAC_SECRET`. Point the integration to the deployed `revenuecat-webhook` function.
+- Enter `REVENUECAT_SECRET_API_KEY` in Supabase Function secrets. Until it exists, account deletion deliberately returns 503 before touching any data because processor-side deletion cannot be completed safely.
 - Enter the public RevenueCat SDK keys and final one-time product IDs in EAS environment variables. Keep RevenueCat secret API keys server-only.
 - Add `thirtynights-dev://auth/callback`, `thirtynights-staging://auth/callback`, and `thirtynights://auth/callback` to the matching Supabase redirect allowlists; enable anonymous users and manual identity linking; enable/configure Apple and Google providers; configure CAPTCHA/rate limits; and set custom SMTP before beta.
-- Deploy the report worker image with the variables in `worker/.env.example`; put `DATABASE_URL`, the Supabase service-role key, and the OpenAI key directly in the host secret manager.
+- Railway currently runs a healthy report-worker image. Deploy the updated consent-enforcing worker from this worktree only as part of the coordinated database/client rollout; keep `DATABASE_URL`, the Supabase service-role key, and the OpenAI key in Railway's secret manager.
 - Publish and provide HTTPS privacy, terms, support, and web account-deletion pages. Configure their public URLs in EAS; the app deliberately refuses fake fallback legal pages.
 - Apple-linked deletion still needs an approved token-revocation design/configuration and physical validation against the owner’s Apple credentials before launch.
 
@@ -105,6 +113,38 @@ later Android release.
   cannot be until the Team ID, Key ID and `.p8` exist as function secrets.
   Root TypeScript and 31 tests pass.
 - 2026-08-06: production-readiness audit. Removed the CNG conflict (native folders gitignored), untracked `.env`, declared export compliance, set the app phone-only, generated a real Android notification mask, added a typed unavailable-provider path for OAuth, gave the worker upstream deadlines and a `/healthz` probe, and lifted the store-price gate that required an account. Expo Doctor now passes 20/20 (was 18/20); root TypeScript, worker TypeScript, 31 tests and the browser production export all pass.
+- 2026-08-10: production Supabase now has active `delete-account`,
+  `apple-identity`, and `revenuecat-webhook` Edge Functions. JWT enforcement is
+  enabled for the two user functions; the webhook performs its own bearer +
+  HMAC verification. Harmless probes return the expected 401 responses. The
+  webhook currently returns 503 because its RevenueCat authorization/HMAC
+  secrets are not configured; the deletion function also requires the real
+  RevenueCat server key before it can complete an authenticated deletion.
+- 2026-08-10: the hosted migration ledger was rechecked through the Supabase
+  connector. All seven baseline migrations through
+  `20260809164553_allowlisted_development_seals` are live; only
+  `20260810165730_authoritative_entitlements_and_processing_consent` remains
+  staged for the coordinated client/worker rollout.
+- 2026-08-10: the Railway `report-worker` production deployment is healthy in
+  Singapore with continuous polling and no worker/database/TLS/OpenAI/FFmpeg
+  errors. Phone recording upload does not pass through Railway; it goes directly
+  to Supabase Storage and `attach_night_audio` before a report job exists.
+- 2026-08-10: the physical-phone "1 of 1 waiting" report was traced to a
+  persisted `Empty month` developer preview. Preview synchronization correctly
+  short-circuited, but the UI had looked like a real journey. Developer
+  previews are now ephemeral, explicitly local-only, disable recording/cloud
+  actions, and provide a safe return flow that preserves or explicitly exports
+  any older preview take before restoring the real cloud chapter.
+- 2026-08-11: app type-check, 102 tests, worker check, browser production export,
+  Expo Doctor 20/20, and diff checks pass. The local Supabase CLI database gate
+  is unavailable because Docker/Podman is not installed; the new migration was
+  instead validated through a complete disposable-PostgreSQL migration chain.
+- 2026-08-11: the current iOS development build was rendered on the isolated
+  375×667 short-phone simulator at standard, accessibility-medium, and maximum
+  Dynamic Type. Onboarding keeps its CTA/footer reachable, yields decorative
+  art to text at accessibility sizes, and uses an inner vertical scroll for all
+  remaining copy. This supplements but does not replace the physical iOS and
+  Android release matrix.
 
 ## Security handoff rule
 

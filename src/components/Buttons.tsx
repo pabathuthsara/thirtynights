@@ -116,7 +116,7 @@ export function Button({
             <Icon size={19} strokeWidth={1.9} color={foreground} />
           ) : null}
         </View>
-        <Text numberOfLines={2} style={[styles.label, { color: foreground }]}>{children}</Text>
+        <Text maxFontSizeMultiplier={2} style={[styles.label, { color: foreground }]}>{children}</Text>
         <View style={styles.iconSlot}>{right}</View>
       </Pressable>
     </Animated.View>
@@ -139,7 +139,7 @@ export function TextButton({ children, onPress, color = colors.roseText, accessi
       hitSlop={16}
       style={({ pressed }) => [styles.textButton, focused && styles.textFocused, pressed && styles.textPressed]}
     >
-      <Text style={[styles.textButtonLabel, { color }]}>{children}</Text>
+      <Text maxFontSizeMultiplier={2} style={[styles.textButtonLabel, { color }]}>{children}</Text>
     </Pressable>
   );
 }

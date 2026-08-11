@@ -93,6 +93,7 @@ function SwitchRow({ icon, title, detail, value, onValueChange, last = false }: 
         {detail ? <Text style={styles.rowDetail}>{detail}</Text> : null}
       </View>
       <Switch
+        style={styles.switch}
         accessible={false}
         pointerEvents="none"
         value={value}
@@ -117,6 +118,8 @@ type SettingsProps = {
   unbackedCount: number;
   syncing: boolean;
   showDeveloperControls: boolean;
+  demoMode?: 'empty' | 'partial' | 'complete';
+  previewRecordingCount?: number;
   onBack: () => void;
   onAuth: () => void;
   onEditReminder: () => void;
@@ -124,6 +127,7 @@ type SettingsProps = {
   onToggleNudge: (enabled: boolean) => void;
   onBackupNetwork: (network: 'wifi-only' | 'wifi-and-cellular') => void;
   onEnableProcessing: () => void;
+  onDisableProcessing: () => void;
   onSync: () => Promise<void>;
   onRestore: () => void;
   onExport: () => Promise<void>;
@@ -132,6 +136,7 @@ type SettingsProps = {
   onSupport: () => void;
   onWebDelete: () => void;
   onPreview: (mode: 'empty' | 'partial' | 'complete') => void;
+  onExitPreview: (discardPreviewRecordings?: boolean) => Promise<void>;
   onPopupCatalog: () => void;
   onPreviewSealing: () => void;
   onDevRecordings: () => void;
@@ -143,15 +148,23 @@ export function SettingsScreen(props: SettingsProps) {
   const [deleteSheet, setDeleteSheet] = useState(false);
   const [backupSheet, setBackupSheet] = useState(false);
   const [accountSheet, setAccountSheet] = useState(false);
-  const [busy, setBusy] = useState<'sync' | 'export' | 'delete' | null>(null);
+  const [exitPreviewSheet, setExitPreviewSheet] = useState(false);
+  const [busy, setBusy] = useState<'sync' | 'export' | 'delete' | 'preview' | null>(null);
   const [toast, setToast] = useState<ToastMessage>(null);
 
   const formattedHour = formatClock(props.reminderHour, props.reminderMinute);
   const connected = props.authState === 'authenticated';
   const hasCloudIdentity = props.authState !== 'local';
   const version = (Constants.expoConfig?.version ?? '1.0.0');
+  const previewName = props.demoMode === 'empty'
+    ? 'Empty month'
+    : props.demoMode === 'partial'
+      ? 'Twelve-night month'
+      : props.demoMode === 'complete'
+        ? 'Opened report state'
+        : undefined;
 
-  const run = async (key: 'sync' | 'export' | 'delete', operation: () => Promise<void>, success: string) => {
+  const run = async (key: 'sync' | 'export' | 'delete' | 'preview', operation: () => Promise<void>, success: string) => {
     try {
       setBusy(key);
       await operation();
@@ -217,21 +230,25 @@ export function SettingsScreen(props: SettingsProps) {
             <Row
               icon={CloudUpload}
               title="Recording backup"
-              detail={!connected
+              detail={props.demoMode
+                ? 'Developer preview · local only'
+                : !connected
                 ? 'Local to this device'
                 : !props.processingConsent
                   ? 'Cloud processing consent required'
                   : `${props.backupNetwork === 'wifi-only' ? 'Wi-Fi only' : 'Wi-Fi and cellular'} · ${props.unbackedCount} waiting`}
-              onPress={() => connected ? setBackupSheet(true) : props.onAuth()}
+              onPress={props.demoMode ? undefined : () => connected ? setBackupSheet(true) : props.onAuth()}
             />
             <Row
               icon={RefreshCw}
-              title={props.syncing ? 'Synchronizing…' : 'Synchronize now'}
-              detail={props.unbackedCount
+              title={props.demoMode ? 'Cloud sync unavailable in preview' : props.syncing ? 'Synchronizing…' : 'Synchronize now'}
+              detail={props.demoMode
+                ? 'Preview recordings stay only on this device'
+                : props.unbackedCount
                 ? `${props.unbackedCount} recording${props.unbackedCount === 1 ? '' : 's'} not backed up`
                 : 'Metadata and reports are up to date locally'}
               busy={busy === 'sync'}
-              onPress={() => void run('sync', props.onSync, 'Everything is synchronized.')}
+              onPress={props.demoMode ? undefined : () => void run('sync', props.onSync, 'Everything is synchronized.')}
             />
             <Row
               icon={ReceiptText}
@@ -273,13 +290,34 @@ export function SettingsScreen(props: SettingsProps) {
           </View>
         </Stagger>
 
-        {props.showDeveloperControls ? (
+        {props.demoMode ? (
           <Stagger index={5}>
+            <Text style={styles.sectionLabel}>LOCAL PREVIEW ACTIVE</Text>
+            <View accessibilityRole="alert" style={styles.previewNotice}>
+              <Text style={styles.previewNoticeTitle}>{previewName} preview is active</Text>
+              <Text style={styles.previewNoticeBody}>
+                This is local visual test data, not your cloud journey. Recording and backup are disabled. Export any preview take you need before returning.
+              </Text>
+            </View>
+            <Button
+              loading={busy === 'preview'}
+              onPress={() => {
+                if (props.previewRecordingCount) setExitPreviewSheet(true);
+                else void run('preview', () => props.onExitPreview(false), 'Your real journey is restored.');
+              }}
+            >
+              Return to my real journey
+            </Button>
+          </Stagger>
+        ) : null}
+
+        {props.showDeveloperControls ? (
+          <Stagger index={props.demoMode ? 6 : 5}>
             <Text style={styles.sectionLabel}>DEVELOPER PREVIEWS</Text>
             <View style={styles.previewGroup}>
-              <Button variant="outline" onPress={() => props.onPreview('empty')}>Empty month</Button>
-              <Button variant="outline" onPress={() => props.onPreview('partial')}>Twelve-night month</Button>
-              <Button variant="outline" onPress={() => props.onPreview('complete')}>Opened report state</Button>
+              <Button variant="outline" disabled={Boolean(props.demoMode)} onPress={() => props.onPreview('empty')}>Empty month</Button>
+              <Button variant="outline" disabled={Boolean(props.demoMode)} onPress={() => props.onPreview('partial')}>Twelve-night month</Button>
+              <Button variant="outline" disabled={Boolean(props.demoMode)} onPress={() => props.onPreview('complete')}>Opened report state</Button>
               <Button variant="outline" onPress={props.onPopupCatalog}>Supporting state catalog</Button>
               <Button variant="outline" onPress={props.onPreviewSealing}>Sealing ceremony</Button>
             </View>
@@ -300,6 +338,30 @@ export function SettingsScreen(props: SettingsProps) {
         <Text style={styles.version}>THIRTY NIGHTS · VERSION {version}</Text>
 
         <BottomSheet
+          visible={exitPreviewSheet}
+          title="Leave this developer preview?"
+          body={`This preview contains ${props.previewRecordingCount ?? 0} local ${props.previewRecordingCount === 1 ? 'recording' : 'recordings'} that cannot be attached to your real scheduled nights. Export first if you need a copy, or explicitly remove the preview ${props.previewRecordingCount === 1 ? 'take' : 'takes'} and return to your cloud journey.`}
+          actions={[
+            {
+              label: 'Export preview first',
+              variant: 'outline',
+              onPress: () => void run('export', props.onExport, 'Your preview export is ready to share.'),
+            },
+            {
+              label: props.previewRecordingCount === 1 ? 'Remove preview take and return' : 'Remove preview takes and return',
+              variant: 'ember',
+              onPress: () => void run('preview', async () => {
+                await props.onExitPreview(true);
+                setExitPreviewSheet(false);
+              }, 'Your real journey is restored.'),
+            },
+          ]}
+          footer={{ label: 'Keep preview', onPress: () => setExitPreviewSheet(false) }}
+          onClose={() => busy === 'preview' ? undefined : setExitPreviewSheet(false)}
+          blocking={busy === 'preview'}
+        />
+
+        <BottomSheet
           visible={accountSheet}
           title="Your account"
           body={`${props.email || 'A permanent cloud identity is linked to this device.'}\n\nThis identity owns your purchases and any backed-up recordings. Signing out is deliberately not offered — your recordings live on this device, and detaching them from their owner is the one thing that cannot be undone safely. To move on, export first and then delete.`}
@@ -309,12 +371,12 @@ export function SettingsScreen(props: SettingsProps) {
 
         <BottomSheet
           visible={backupSheet}
-          title="Private cloud backup"
-          body="When enabled, recordings are sent securely to the configured storage provider and may be processed by configured AI vendors to create your reports. This is encrypted in transit and at rest, but it is not end-to-end encrypted."
+          title="Private backup & reflection processing"
+          body="If you agree, raw voice recordings plus their night and date metadata are securely stored with Supabase. OpenAI transcribes the recordings and uses those transcripts to create your private reflections. Data is encrypted in transit and at rest, but is not end-to-end encrypted. Withdrawing stops future uploads and AI processing; already uploaded data remains in your private account until you use Delete everything. Review the Privacy Policy for the approved retention terms."
           actions={[
             ...(!props.processingConsent
               ? [{ label: 'I agree — enable processing', onPress: () => { props.onEnableProcessing(); setBackupSheet(false); } }]
-              : []),
+              : [{ label: 'Withdraw processing permission', variant: 'outline' as const, onPress: () => { props.onDisableProcessing(); setBackupSheet(false); } }]),
             { label: 'Wi-Fi only', variant: 'outline' as const, onPress: () => { props.onBackupNetwork('wifi-only'); setBackupSheet(false); } },
             { label: 'Wi-Fi and cellular', variant: 'outline' as const, onPress: () => { props.onBackupNetwork('wifi-and-cellular'); setBackupSheet(false); } },
           ]}
@@ -382,6 +444,7 @@ const styles = StyleSheet.create({
   lastRow: { borderBottomWidth: 0 },
   pressed: { backgroundColor: 'rgba(190,111,124,0.06)' },
   rowIcon: {
+    flexShrink: 0,
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -390,7 +453,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(239,188,195,0.26)',
   },
   dangerIcon: { backgroundColor: 'rgba(168,79,97,0.12)' },
-  rowCopy: { flex: 1 },
+  rowCopy: { flex: 1, minWidth: 0 },
+  switch: { flexShrink: 0 },
   rowTitle: {
     color: colors.bone,
     fontFamily: typography.serifMedium,
@@ -402,6 +466,22 @@ const styles = StyleSheet.create({
   },
   dangerText: { color: colors.ember },
   previewGroup: { gap: 8 },
+  previewNotice: {
+    marginBottom: 12,
+    padding: 14,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(184,134,53,0.34)',
+    borderRadius: radii.md,
+    backgroundColor: 'rgba(184,134,53,0.09)',
+  },
+  previewNoticeTitle: {
+    color: colors.brassText,
+    fontFamily: typography.sans,
+    fontWeight: weight.semibold,
+    fontSize: 14,
+  },
+  previewNoticeBody: { ...textStyles.bodySmall, fontSize: 13, lineHeight: 19 },
   version: {
     ...textStyles.caption,
     color: colors.boneFaint,

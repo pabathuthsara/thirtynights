@@ -13,7 +13,7 @@ export type SheetAction = {
   variant?: 'bone' | 'outline' | 'ghost' | 'ember';
 };
 
-export function BottomSheet({ visible, title, body, actions, footer, children, onClose, blocking = false }: {
+export function BottomSheet({ visible, title, body, actions, footer, children, onClose, onShown, blocking = false }: {
   visible: boolean;
   title: string;
   body?: string;
@@ -21,6 +21,8 @@ export function BottomSheet({ visible, title, body, actions, footer, children, o
   footer?: { label: string; onPress: () => void };
   children?: ReactNode;
   onClose: () => void;
+  /** Fired by the native modal only after this surface is actually visible. */
+  onShown?: () => void;
   blocking?: boolean;
 }) {
   // The modal stays mounted through the exit animation, otherwise the spring
@@ -76,7 +78,7 @@ export function BottomSheet({ visible, title, body, actions, footer, children, o
   const maxSheetHeight = Math.max(260, windowHeight - insets.top - 56);
 
   return (
-    <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={blocking ? undefined : onClose}>
+    <Modal visible transparent animationType="none" statusBarTranslucent onShow={onShown} onRequestClose={blocking ? undefined : onClose}>
       <View style={styles.modal}>
         <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, { opacity: backdrop }]} pointerEvents="none" />
         <Pressable

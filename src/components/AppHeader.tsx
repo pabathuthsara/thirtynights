@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { ArrowLeft, Settings, Share2 } from 'lucide-react-native';
 
 import { IconButton } from '@/components/Buttons';
@@ -15,10 +15,12 @@ export function AppHeader({ label, onBack, onSettings, onShare, paper = false, c
   /** Rendered over the nightfall atmosphere. */
   night?: boolean;
 }) {
+  const { width, fontScale } = useWindowDimensions();
   const rightCount = (onSettings ? 1 : 0) + (onShare ? 1 : 0);
   // Both flanks reserve the same width so the title stays optically centred,
   // and the reservation grows with the number of buttons actually rendered.
   const flank = Math.max(1, rightCount, onBack ? 1 : 0) * (HIT_TARGET + 8);
+  const constrainedLabel = width < 360 || fontScale > 1.4;
 
   return (
     <View style={[styles.header, compact && styles.compactHeader]}>
@@ -27,9 +29,9 @@ export function AppHeader({ label, onBack, onSettings, onShare, paper = false, c
       </View>
       {label ? (
         <View style={styles.center}>
-          <Sparkle size={11} color={night ? nightTheme.candle : colors.brass} />
-          <Text numberOfLines={1} style={[textStyles.eyebrow, styles.label, paper && styles.paperLabel, night && styles.nightLabel]}>{label}</Text>
-          <Sparkle size={11} color={night ? nightTheme.candle : colors.brass} />
+          {!constrainedLabel ? <Sparkle size={11} color={night ? nightTheme.candle : colors.brass} /> : null}
+          <Text maxFontSizeMultiplier={2} numberOfLines={2} style={[textStyles.eyebrow, styles.label, constrainedLabel && styles.constrainedLabel, paper && styles.paperLabel, night && styles.nightLabel]}>{label}</Text>
+          {!constrainedLabel ? <Sparkle size={11} color={night ? nightTheme.candle : colors.brass} /> : null}
         </View>
       ) : <View style={styles.center} />}
       <View style={[styles.side, styles.right, { width: flank }]}>
@@ -65,16 +67,22 @@ const styles = StyleSheet.create({
   },
   center: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 9,
   },
   label: {
+    flexShrink: 1,
     textAlign: 'center',
     fontSize: 11,
     letterSpacing: 1.9,
     color: colors.boneDim,
+  },
+  constrainedLabel: {
+    fontSize: 10,
+    letterSpacing: 0.8,
   },
   paperLabel: {
     color: colors.paperDim,

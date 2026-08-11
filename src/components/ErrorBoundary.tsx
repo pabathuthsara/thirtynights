@@ -27,7 +27,7 @@ export class ErrorBoundary extends Component<PropsWithChildren<{ onReset?: () =>
     if (!error) return this.props.children;
 
     return (
-      <Screen scroll={false} contentStyle={styles.screen}>
+      <Screen contentStyle={styles.screen}>
         <View style={styles.card}>
           <Text accessibilityRole="header" style={styles.title}>Something went sideways.</Text>
           <Text style={styles.body}>

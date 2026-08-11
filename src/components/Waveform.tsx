@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 
 import { colors, motion, nativeAnimationDriver } from '@/theme';
@@ -33,6 +33,25 @@ export function Waveform({
   const count = compact ? 38 : 52;
   const height = compact ? 40 : 52;
   const reducedMotion = useReducedMotion();
+  const [availableWidth, setAvailableWidth] = useState(0);
+
+  // Preserve the three-point bars for as long as possible and spend horizontal
+  // space on the gaps first. A 52-bar report waveform previously required 309pt
+  // even when its card offered only ~234pt on a 320pt phone, so the last bars
+  // were clipped. Measuring the real row makes the geometry exact at every
+  // width, including fractional native layout pixels.
+  const geometry = useMemo(() => {
+    if (!availableWidth) return { barWidth: BAR_WIDTH, gap: 0 };
+    const usable = Math.max(0, availableWidth - 1); // physical-pixel rounding guard
+    const gaps = Math.max(0, count - 1);
+    const gap = gaps
+      ? Math.max(0, Math.min(BAR_GAP, (usable - count * BAR_WIDTH) / gaps))
+      : 0;
+    const barWidth = count
+      ? Math.max(0, Math.min(BAR_WIDTH, (usable - gap * gaps) / count))
+      : 0;
+    return { barWidth, gap };
+  }, [availableWidth, count]);
 
   // A stable pseudo-random silhouette for playback mode. Seeded, so a given
   // report always renders the same shape.
@@ -83,9 +102,13 @@ export function Waveform({
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={[styles.row, { height }]}
+      onLayout={(event) => {
+        const measured = event.nativeEvent.layout.width;
+        if (measured > 0 && Math.abs(measured - availableWidth) > 0.5) setAvailableWidth(measured);
+      }}
+      style={[styles.row, { height, gap: geometry.gap }]}
     >
-      {scales.current.map((scale, index) => {
+      {availableWidth > 0 ? scales.current.map((scale, index) => {
         const played = !idle && index / count <= progress;
         const color = idle
           ? 'rgba(118,82,99,0.24)'
@@ -101,6 +124,7 @@ export function Waveform({
               styles.bar,
               {
                 height: height - 8,
+                width: geometry.barWidth,
                 backgroundColor: color,
                 opacity: idle ? 0.55 : played || active ? 0.95 : 0.4,
                 transform: [{ scaleY: scale }],
@@ -108,7 +132,7 @@ export function Waveform({
             ]}
           />
         );
-      })}
+      }) : null}
     </View>
   );
 }
@@ -119,14 +143,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: BAR_GAP,
     overflow: 'hidden',
   },
   bar: {
-    width: BAR_WIDTH,
     borderRadius: BAR_WIDTH,
-    // Bars may shrink in a narrow container rather than overflowing it.
-    flexShrink: 1,
-    minWidth: 2,
   },
 });

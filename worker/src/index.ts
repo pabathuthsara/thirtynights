@@ -54,15 +54,64 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 type Job = { job_id: string; report_id: string; chapter_id: string; checkpoint_night: number; user_id: string; attempts: number; trace_id: string };
 type Night = { id: string; index: number; storage_path: string; checksum: string; byte_size: string };
 
+class ProcessingConsentWithdrawnError extends Error {
+  constructor() {
+    super('processing_consent_withdrawn');
+    this.name = 'ProcessingConsentWithdrawnError';
+  }
+}
+
+class JobAuthorizationRevokedError extends Error {
+  constructor() {
+    super('entitlement_revoked');
+    this.name = 'JobAuthorizationRevokedError';
+  }
+}
+
+async function assertProcessingConsent(job: Job) {
+  const result = await pool.query<{
+    status: string;
+    error_code: string | null;
+    checkpoint_night: number;
+    access_through: number;
+    processing_consent_version: string | null;
+    processing_consent_granted_at: string | null;
+    processing_consent_withdrawn_at: string | null;
+  }>(`
+    select j.status,j.error_code,r.checkpoint_night,c.access_through,
+      u.processing_consent_version,u.processing_consent_granted_at,u.processing_consent_withdrawn_at
+    from public.users u
+    join public.chapters c on c.user_id=u.id
+    join public.reports r on r.chapter_id=c.id
+    join private.report_jobs j on j.report_id=r.id
+    where u.id=$1 and j.id=$2`, [job.user_id, job.job_id]);
+  const state = result.rows[0];
+  if (!state?.processing_consent_version || !state.processing_consent_granted_at
+    || state.processing_consent_withdrawn_at || state.error_code === 'processing_consent_withdrawn') {
+    throw new ProcessingConsentWithdrawnError();
+  }
+  if (state.status !== 'leased' || state.checkpoint_night > state.access_through) {
+    throw new JobAuthorizationRevokedError();
+  }
+}
+
 async function leaseJob(): Promise<Job | null> {
   const client = await pool.connect();
   try {
     await client.query('begin');
     const result = await client.query<Job>(`
       select j.id job_id,r.id report_id,r.chapter_id,r.checkpoint_night,c.user_id,j.attempts,j.trace_id
-      from private.report_jobs j join public.reports r on r.id=j.report_id join public.chapters c on c.id=r.chapter_id
-      where (j.status in ('queued','retry') and j.next_attempt_at<=now()) or (j.status='leased' and j.lease_until<now())
-      order by j.next_attempt_at for update of j skip locked limit 1`);
+      from private.report_jobs j
+      join public.reports r on r.id=j.report_id
+      join public.chapters c on c.id=r.chapter_id
+      join public.users u on u.id=c.user_id
+      where u.processing_consent_version is not null
+        and u.processing_consent_granted_at is not null
+        and u.processing_consent_withdrawn_at is null
+        and r.checkpoint_night<=c.access_through
+        and ((j.status in ('queued','retry') and j.next_attempt_at<=now())
+          or (j.status='leased' and j.lease_until<now()))
+      order by j.next_attempt_at for update of j,c skip locked limit 1`);
     const job = result.rows[0];
     if (!job) { await client.query('commit'); return null; }
     await client.query(`update private.report_jobs set status='leased',lease_until=now()+interval '30 minutes',updated_at=now() where id=$1`, [job.job_id]);
@@ -208,21 +257,30 @@ async function uploadReport(path: string, bytes: Uint8Array) {
 async function processJob(job: Job) {
   const directory = await mkdtemp(join(tmpdir(), 'thirtynights-'));
   try {
+    await assertProcessingConsent(job);
     const nightResult = await pool.query<Night>(`select id,index,storage_path,checksum,byte_size::text from public.nights where chapter_id=$1 and index<=$2 and storage_path is not null order by index`, [job.chapter_id, job.checkpoint_night]);
     if (!nightResult.rows.length) throw new Error('checkpoint_audio_missing');
     const allSegments: Segment[] = [];
     const sources = new Map<string, Uint8Array>();
     for (const night of nightResult.rows) {
+      await assertProcessingConsent(job);
       const bytes = await storageDownload(night.storage_path);
+      await assertProcessingConsent(job);
       sources.set(night.id, bytes);
       const transcribed = await transcribe(bytes, night, night.index);
+      // If withdrawal landed while the upstream request was in flight, discard
+      // its response. The database trigger below also closes the check/insert
+      // race by rejecting transcript rows for a cancelled job.
+      await assertProcessingConsent(job);
       for (const segment of transcribed) {
-        const inserted = await pool.query<{ id: string }>(`insert into private.transcript_segments(night_id,start_ms,end_ms,text,language,model_version) values($1,$2,$3,$4,$5,$6) returning id`, [night.id,segment.startMs,segment.endMs,segment.text,null,transcriptionModel]);
+        const inserted = await pool.query<{ id: string }>(`insert into private.transcript_segments(night_id,start_ms,end_ms,text,language,model_version,report_job_id) values($1,$2,$3,$4,$5,$6,$7) returning id`, [night.id,segment.startMs,segment.endMs,segment.text,null,transcriptionModel,job.job_id]);
         allSegments.push({ ...segment, id: inserted.rows[0]!.id });
       }
     }
     if (!allSegments.length) throw new Error('no_speech_detected');
+    await assertProcessingConsent(job);
     const report = canonicalizeReportReferences(await analyze(job, allSegments), allSegments);
+    await assertProcessingConsent(job);
     validateReportContract(report, job, allSegments, schemaVersion);
     const clientSections = report.sections.map((section) => ({
       title: section.title,
@@ -238,15 +296,46 @@ async function processJob(job: Job) {
         quote: evidence.quote,
       })),
     }));
+    await assertProcessingConsent(job);
     const audio = await renderClips(report, nightResult.rows, sources, directory);
     const audioPath = audio ? `${job.user_id}/${job.chapter_id}/report-${job.checkpoint_night}-${schemaVersion}.m4a` : null;
-    if (audio && audioPath) await uploadReport(audioPath, audio);
     const client = await pool.connect();
     try {
       await client.query('begin');
+      // Use the same per-user locks as the ledger and consent RPCs through the
+      // final upload/publication. Exactly one transition wins: the report
+      // commits before withdrawal/refund returns, or no output is published.
+      await client.query(
+        `select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('entitlement:' || $1::text,0))`,
+        [job.user_id],
+      );
+      await client.query(
+        `select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('processing-consent:' || $1::text,0))`,
+        [job.user_id],
+      );
+      const consent = await client.query<{
+        processing_consent_version: string | null;
+        processing_consent_withdrawn_at: string | null;
+        access_through: number;
+      }>(`
+        select u.processing_consent_version,u.processing_consent_withdrawn_at,c.access_through
+        from public.users u join public.chapters c on c.user_id=u.id
+        where u.id=$1 and c.id=$2`, [job.user_id, job.chapter_id]);
+      const jobState = await client.query<{ status: string; error_code: string | null }>(
+        `select status,error_code from private.report_jobs where id=$1 for update`, [job.job_id],
+      );
+      if (!consent.rows[0]?.processing_consent_version
+        || consent.rows[0].processing_consent_withdrawn_at
+        || jobState.rows[0]?.error_code === 'processing_consent_withdrawn') {
+        throw new ProcessingConsentWithdrawnError();
+      }
+      if (jobState.rows[0]?.status !== 'leased' || job.checkpoint_night > consent.rows[0].access_through) {
+        throw new JobAuthorizationRevokedError();
+      }
+      if (audio && audioPath) await uploadReport(audioPath, audio);
       await client.query(`update public.reports set status='ready',summary=$2,sections=$3,audio_path=$4,generated_at=now(),report_version=$5,error_code=null where id=$1`, [job.report_id,report.summary,JSON.stringify(clientSections),audioPath,schemaVersion]);
       await client.query(`update public.nights set state='revealed',revealed_at=coalesce(revealed_at,now()) where chapter_id=$1 and index<=$2 and recorded_at is not null`, [job.chapter_id,job.checkpoint_night]);
-      await client.query(`update public.chapters set completed_at=case when target_length=$2 and target_length>7 then coalesce(completed_at,now()) else completed_at end,server_revision=server_revision+1 where id=$1`, [job.chapter_id,job.checkpoint_night]);
+      await client.query(`update public.chapters set completed_at=case when access_through=$2 and access_through>7 then coalesce(completed_at,now()) else completed_at end,server_revision=server_revision+1 where id=$1`, [job.chapter_id,job.checkpoint_night]);
       await client.query(`update private.report_jobs set status='complete',model_version=$2,prompt_version=$3,lease_until=null,updated_at=now() where id=$1`, [job.job_id,reportModel,promptVersion]);
       await client.query('commit');
     } catch (error) { await client.query('rollback'); throw error; }
@@ -255,6 +344,25 @@ async function processJob(job: Job) {
 }
 
 async function failJob(job: Job, error: unknown) {
+  const cancellationReason = error instanceof ProcessingConsentWithdrawnError
+    || (error instanceof Error && error.message.includes('processing consent'))
+    ? 'processing_consent_withdrawn'
+    : error instanceof JobAuthorizationRevokedError
+      ? 'entitlement_revoked'
+      : undefined;
+  if (cancellationReason) {
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(`delete from private.transcript_segments where report_job_id=$1`, [job.job_id]);
+      await client.query(`update private.report_jobs set status='cancelled',error_code=$2,lease_until=null,updated_at=now() where id=$1`, [job.job_id,cancellationReason]);
+      await client.query(`update public.reports set status='failed',error_code=$2,trace_id=null where id=$1 and status in ('queued','running')`, [job.report_id,cancellationReason]);
+      await client.query('commit');
+    } catch (transactionError) { await client.query('rollback'); throw transactionError; }
+    finally { client.release(); }
+    console.log('report_job_cancelled', { traceId: job.trace_id, reason: cancellationReason });
+    return;
+  }
   const attempts = job.attempts + 1;
   const final = attempts >= 5;
   const code = error instanceof Error ? error.message.split(':',1)[0].slice(0,80) : 'unknown';

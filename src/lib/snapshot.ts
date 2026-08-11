@@ -2,7 +2,40 @@ import * as Crypto from 'expo-crypto';
 
 import { addLocalDays, localDateKey, timezoneName } from '@/domain/calendar';
 import { questionAssignment } from '@/data/questions';
-import type { AccessTier, AppSnapshot, Chapter, ChapterLength, Night } from '@/types';
+import type { AccessTier, AppSnapshot, Chapter, ChapterLength, Night, PurchaseIntent } from '@/types';
+
+const PURCHASE_INTENT_MAX_LIFETIME_MS = 16 * 60 * 1_000;
+const PAYWALL_SOURCES = new Set(['night7_report', 'locked_night8', 'home_card', 'settings_restore']);
+
+/** Stored checkout state is executable state, so accept only the small shape
+ * created by the current app. Pre-token intents are deliberately discarded:
+ * replaying an old store action is riskier than asking for one fresh tap. */
+function normalizePurchaseIntent(value: unknown): PurchaseIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const intent = value as Partial<PurchaseIntent>;
+  if (intent.kind !== 'purchase' && intent.kind !== 'restore') return undefined;
+  if (intent.plan !== 'paid30' && intent.plan !== 'paid90') return undefined;
+  if (typeof intent.source !== 'string' || !PAYWALL_SOURCES.has(intent.source)) return undefined;
+  if (intent.returnStep !== (intent.kind === 'restore' ? 'restore' : 'store-confirmation')) return undefined;
+  if (typeof intent.resumeToken !== 'string' || !intent.resumeToken.trim()) return undefined;
+  if (intent.kind === 'purchase' && (typeof intent.productId !== 'string' || !intent.productId.trim())) return undefined;
+  if (typeof intent.createdAt !== 'string' || typeof intent.expiresAt !== 'string') return undefined;
+  const createdAt = Date.parse(intent.createdAt);
+  const expiresAt = Date.parse(intent.expiresAt);
+  if (!Number.isFinite(createdAt) || !Number.isFinite(expiresAt)) return undefined;
+  if (expiresAt <= createdAt || expiresAt - createdAt > PURCHASE_INTENT_MAX_LIFETIME_MS) return undefined;
+  return {
+    kind: intent.kind,
+    plan: intent.plan,
+    productId: typeof intent.productId === 'string' ? intent.productId : undefined,
+    source: intent.source as PurchaseIntent['source'],
+    localizedPrice: typeof intent.localizedPrice === 'string' ? intent.localizedPrice : undefined,
+    returnStep: intent.returnStep,
+    resumeToken: intent.resumeToken,
+    createdAt: intent.createdAt,
+    expiresAt: intent.expiresAt,
+  };
+}
 
 function visualSeed(id: string) {
   return [...id].reduce((seed, character) => ((seed * 31) + character.charCodeAt(0)) >>> 0, 2166136261);
@@ -53,6 +86,7 @@ export function defaultSnapshot(): AppSnapshot {
   return {
     schemaVersion: 2,
     onboarded: false,
+    onboardingVersion: 2,
     reminderHour: 22,
     reminderMinute: 0,
     timezone,
@@ -67,6 +101,37 @@ export function defaultSnapshot(): AppSnapshot {
     reports: [],
     seenBackupPrompt: false,
     appearance: 'soft-feminine-premium',
+  };
+}
+
+/**
+ * Create the recording-free shell used while a different cloud owner hydrates.
+ * Consent, purchases, reports, chapters, and checkout state all belong to the
+ * previous identity and must never be carried across that boundary.
+ */
+export function snapshotForCloudIdentity(
+  previous: AppSnapshot,
+  ownerId: string,
+  authState: AppSnapshot['authState'],
+  email?: string,
+): AppSnapshot {
+  const fresh = defaultSnapshot();
+  return {
+    ...fresh,
+    onboarded: previous.onboarded,
+    onboardingVersion: previous.onboardingVersion,
+    intentions: previous.intentions,
+    reminderHour: previous.reminderHour,
+    reminderMinute: previous.reminderMinute,
+    timezone: previous.timezone,
+    notificationsEnabled: previous.notificationsEnabled,
+    notificationPreview: previous.notificationPreview,
+    gentleNudge: previous.gentleNudge,
+    authState,
+    ownerId,
+    email,
+    backupNetwork: previous.backupNetwork,
+    appearance: previous.appearance,
   };
 }
 
@@ -97,7 +162,15 @@ export function normalizeSnapshot(value: unknown): AppSnapshot | null {
   const legacy = value as Partial<AppSnapshot> & { currentChapter?: Partial<Chapter> & { nights?: Partial<Night>[] } };
   if (!legacy.currentChapter || !Array.isArray(legacy.currentChapter.nights)) return null;
   if (legacy.schemaVersion === 2 && legacy.currentChapter.nights.every((night) => night.id && night.expectedLocalDate)) {
-    return { ...legacy, appearance: 'soft-feminine-premium' } as AppSnapshot;
+    const defaults = defaultSnapshot();
+    const purchaseIntent = normalizePurchaseIntent(legacy.purchaseIntent);
+    return {
+      ...defaults,
+      ...legacy,
+      onboardingVersion: legacy.onboardingVersion ?? (legacy.onboarded ? 1 : 2),
+      purchaseIntent,
+      appearance: 'soft-feminine-premium',
+    } as AppSnapshot;
   }
 
   const timezone = legacy.timezone ?? timezoneName();
@@ -136,9 +209,11 @@ export function normalizeSnapshot(value: unknown): AppSnapshot | null {
     ...snapshot,
     ...legacy,
     schemaVersion: 2,
+    onboardingVersion: legacy.onboardingVersion ?? (legacy.onboarded ? 1 : 2),
     timezone,
     backupNetwork: legacy.backupNetwork ?? 'wifi-only',
     notificationPreview: legacy.notificationPreview ?? 'private',
+    purchaseIntent: normalizePurchaseIntent(legacy.purchaseIntent),
     reports: legacy.reports ?? [],
     currentChapter: {
       ...snapshot.currentChapter,

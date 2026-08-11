@@ -94,6 +94,17 @@ function assertProductionConfiguration() {
   for (const name of ['EXPO_PUBLIC_PRIVACY_URL', 'EXPO_PUBLIC_TERMS_URL', 'EXPO_PUBLIC_SUPPORT_URL', 'EXPO_PUBLIC_DELETE_ACCOUNT_URL'] as const) {
     if (!process.env[name]!.startsWith('https://')) throw new Error(`${name} must use HTTPS in production.`);
   }
+
+  // The RevenueCat webhook maps these exact permanent product identifiers to
+  // server-authoritative grants. Refuse a production build that could charge
+  // for an identifier the ledger would ignore.
+  const expectedProducts = {
+    EXPO_PUBLIC_NIGHTS_30_PRODUCT_ID: 'com.thirtynights.nights30',
+    EXPO_PUBLIC_NIGHTS_90_PRODUCT_ID: 'com.thirtynights.nights90',
+  } as const;
+  for (const [name, expected] of Object.entries(expectedProducts)) {
+    if (process.env[name] !== expected) throw new Error(`${name} must be ${expected} to match the production purchase ledger.`);
+  }
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {
@@ -152,7 +163,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         resizeMode: 'contain',
         backgroundColor: '#F8EFE7',
       }],
-      ['expo-audio', { microphonePermission: 'Thirty Nights uses the microphone only while you hold the record button.' }],
+      ['expo-audio', { microphonePermission: 'Thirty Nights uses the microphone only while you record a nightly answer.' }],
       // Android draws the small icon as a mask: anything with real colour in it
       // arrives as a grey blob. `notification-icon.png` is a white silhouette on
       // transparent (see scripts/make_notification_icon.py), tinted at runtime

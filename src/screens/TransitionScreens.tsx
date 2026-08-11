@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Image, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Check } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -15,6 +15,27 @@ const STAGE = 300;
 const ENVELOPE_W = 258;
 const ENVELOPE_H = 160;
 const SEAL = 78;
+
+/** `null` deliberately means "still checking". Timed screens must not assume
+ *  assistive technology is off during that brief async window and advance out
+ *  from under someone before the platform answers. */
+function useScreenReaderEnabled() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void AccessibilityInfo.isScreenReaderEnabled()
+      .then((value) => { if (active) setEnabled(value); })
+      .catch(() => { if (active) setEnabled(false); });
+    const subscription = AccessibilityInfo.addEventListener('screenReaderChanged', setEnabled);
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return enabled;
+}
 
 /**
  * The sealing ceremony. It ends sealed — the reveal is its own screen now.
@@ -41,7 +62,25 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
   const light = useRef(new Animated.Value(0)).current;
   const words = useRef(new Animated.Value(0)).current;
   const reducedMotion = useReducedMotion();
+  const screenReaderEnabled = useScreenReaderEnabled();
+  const { width, height, fontScale } = useWindowDimensions();
   const [pressed, setPressed] = useState(false);
+  const [ceremonyComplete, setCeremonyComplete] = useState(false);
+
+  // Keep the original proportions, but let the entire object give way before
+  // text or a device edge does. At 320×568 this leaves a 272×218 stage; large
+  // system text gives the copy a little more of the vertical budget.
+  const stageScale = Math.max(0.68, Math.min(
+    1,
+    (width - 48) / STAGE,
+    (height * (fontScale > 1.2 ? 0.34 : 0.42)) / 240,
+  ));
+  const stageWidth = STAGE * stageScale;
+  const stageHeight = 240 * stageScale;
+  const envelopeWidth = ENVELOPE_W * stageScale;
+  const envelopeHeight = ENVELOPE_H * stageScale;
+  const sealSize = SEAL * stageScale;
+  const glowSize = 190 * stageScale;
 
   useEffect(() => {
     AccessibilityInfo.announceForAccessibility(`Night ${nightIndex} is sealed.`);
@@ -51,10 +90,8 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
     if (reducedMotion) {
       [fold, flap, drop, impact, light, words].forEach((value) => value.setValue(1));
       setPressed(true);
-      // Reduced motion removes motion, not the confirmation — hold long enough
-      // for the words to actually be read.
-      const timer = setTimeout(onDone, 1500);
-      return () => clearTimeout(timer);
+      setCeremonyComplete(true);
+      return;
     }
 
     const sequence = Animated.sequence([
@@ -87,22 +124,31 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
 
     sequence.start(({ finished }) => {
       // A short beat on the sealed envelope, then the reveal takes over.
-      if (finished) setTimeout(onDone, 620);
+      if (finished) setCeremonyComplete(true);
     });
 
     return () => {
       clearTimeout(contact);
       sequence.stop();
     };
-  }, [drop, flap, fold, impact, light, nightIndex, onDone, reducedMotion, words]);
+  }, [drop, flap, fold, impact, light, nightIndex, reducedMotion, words]);
+
+  useEffect(() => {
+    if (!ceremonyComplete || screenReaderEnabled !== false) return;
+    // Reduced motion removes movement, not the confirmation. Its longer hold is
+    // preserved; the animated ceremony keeps its original final beat.
+    const timer = setTimeout(onDone, reducedMotion ? 1500 : 620);
+    return () => clearTimeout(timer);
+  }, [ceremonyComplete, onDone, reducedMotion, screenReaderEnabled]);
 
   return (
-    <Screen scroll={false} variant="night" contentStyle={styles.center}>
-      <View style={styles.stage}>
+    <Screen variant="night" contentStyle={styles.center}>
+      <View style={[styles.stage, { width: stageWidth, height: stageHeight }]}>
         {/* The take, folding inward and fading under the flap. */}
         <Animated.View
           style={[
             styles.takeLines,
+            { width: (ENVELOPE_W - 92) * stageScale, gap: 9 * stageScale },
             {
               opacity: fold.interpolate({ inputRange: [0, 0.7, 1], outputRange: [1, 0.5, 0] }),
               transform: [{ scaleX: fold.interpolate({ inputRange: [0, 1], outputRange: [1, 0.05] }) }],
@@ -114,13 +160,21 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
           ))}
         </Animated.View>
 
-        <View style={styles.envelope}>
+        <View style={[
+          styles.envelope,
+          { width: envelopeWidth, height: envelopeHeight, borderRadius: radii.md * stageScale },
+        ]}>
           <LinearGradient colors={['#FFFCF7', '#F6E7DF']} style={StyleSheet.absoluteFill} />
-          <View style={styles.envelopeSeam} />
+          <View style={[styles.envelopeSeam, { top: envelopeHeight / 2 }]} />
           {/* The flap folds shut over the take. */}
           <Animated.View
             style={[
               styles.flap,
+              {
+                height: envelopeHeight * 0.62,
+                borderBottomLeftRadius: 120 * stageScale,
+                borderBottomRightRadius: 120 * stageScale,
+              },
               {
                 opacity: flap.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 1, 1] }),
                 transform: [
@@ -145,7 +199,12 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
             },
           ]}
         >
-          <Glow size={190} color={colors.brass} opacity={0.85} style={styles.glowCentre} />
+          <Glow
+            size={glowSize}
+            color={colors.brass}
+            opacity={0.85}
+            style={{ left: (stageWidth - glowSize) / 2, top: (stageHeight - glowSize) / 2 }}
+          />
         </Animated.View>
 
         {/* The seal. Absolutely fills the stage and is centred within it, so its
@@ -156,7 +215,7 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
             {
               opacity: drop.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.55, 1] }),
               transform: [
-                { translateY: drop.interpolate({ inputRange: [0, 1], outputRange: [-150, 0] }) },
+                { translateY: drop.interpolate({ inputRange: [0, 1], outputRange: [-150 * stageScale, 0] }) },
                 { scale: drop.interpolate({ inputRange: [0, 1], outputRange: [1.85, 1] }) },
               ],
             },
@@ -170,13 +229,22 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
               ],
             }}
           >
-            <View style={styles.sealShadow}>
+            <View style={[
+              styles.sealShadow,
+              { width: sealSize, height: sealSize, borderRadius: sealSize / 2 },
+            ]}>
               <Image source={keepsakeDecorations.waxSeal} resizeMode="contain" style={styles.sealImage} />
               {/* A single shimmer travelling across the wax once it has set. */}
               <Animated.View
                 pointerEvents="none"
                 style={[
                   styles.gleam,
+                  {
+                    top: sealSize * 0.18,
+                    left: sealSize * 0.2,
+                    width: 16 * stageScale,
+                    height: sealSize * 0.7,
+                  },
                   {
                     opacity: light.interpolate({ inputRange: [0, 0.3, 0.8, 1], outputRange: [0, 0, 0.85, 0.35] }),
                     transform: [
@@ -192,8 +260,19 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
 
         {pressed ? (
           <>
-            <Sparkle size={13} color={night.candle} twinkle style={styles.sparkleOne} />
-            <Sparkle size={10} color={colors.rose} twinkle delay={340} style={styles.sparkleTwo} />
+            <Sparkle
+              size={13 * stageScale}
+              color={night.candle}
+              twinkle
+              style={{ position: 'absolute', top: 26 * stageScale, right: 42 * stageScale }}
+            />
+            <Sparkle
+              size={10 * stageScale}
+              color={colors.rose}
+              twinkle
+              delay={340}
+              style={{ position: 'absolute', bottom: 34 * stageScale, left: 52 * stageScale }}
+            />
           </>
         ) : null}
       </View>
@@ -209,6 +288,11 @@ export function SealingScreen({ nightIndex = 1, onDone }: { nightIndex?: number;
       >
         <Text accessibilityRole="header" style={styles.sealed}>Sealed for later.</Text>
         <Text style={styles.sealedSub}>Night {nightIndex} is tucked away.</Text>
+        {ceremonyComplete && screenReaderEnabled ? (
+          <View style={styles.accessibleContinue}>
+            <Button onPress={onDone} accessibilityLabel="Continue to the night reward">Continue</Button>
+          </View>
+        ) : null}
       </Animated.View>
     </Screen>
   );
@@ -225,10 +309,12 @@ export type GeneratingStep = { label: string; state: 'done' | 'active' | 'skippe
  * account, no consent, or no Wi-Fi — the one thing this product promises never
  * to do.
  */
-export function GeneratingScreen({ mini = false, steps, onDone }: {
+export function GeneratingScreen({ mini = false, steps, onDone, onSetup, onRetry }: {
   mini?: boolean;
   steps: GeneratingStep[];
   onDone: () => void;
+  onSetup?: () => void;
+  onRetry?: () => void;
 }) {
   const reducedMotion = useReducedMotion();
   const pulse = useRef(new Animated.Value(0)).current;
@@ -244,7 +330,7 @@ export function GeneratingScreen({ mini = false, steps, onDone }: {
   }, [pulse, reducedMotion]);
 
   return (
-    <Screen scroll={false} variant="night" contentStyle={styles.center}>
+    <Screen variant="night" contentStyle={styles.generatingCenter}>
       <Animated.View
         pointerEvents="none"
         style={{
@@ -282,7 +368,10 @@ export function GeneratingScreen({ mini = false, steps, onDone }: {
       </View>
 
       <View style={styles.generatingAction}>
-        <Button onPress={onDone}>Continue</Button>
+        <Button onPress={onSetup ?? onDone}>{onSetup ? 'Finish reflection setup' : 'Continue'}</Button>
+        {onRetry ? <Button variant="outline" onPress={onRetry}>Retry now</Button> : null}
+        {onSetup ? <Button variant="ghost" onPress={onDone}>Keep this night on my phone for now</Button> : null}
+        <Text style={styles.safeClose}>You can safely close the app. This checkpoint stays available from Home.</Text>
       </View>
     </Screen>
   );
@@ -290,14 +379,21 @@ export function GeneratingScreen({ mini = false, steps, onDone }: {
 
 const styles = StyleSheet.create({
   center: {
+    minHeight: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 20,
+    paddingVertical: 24,
+  },
+  generatingCenter: {
+    minHeight: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+    paddingVertical: 28,
   },
 
   stage: {
-    width: STAGE,
-    height: 240,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -310,15 +406,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  glowCentre: {
-    left: (STAGE - 190) / 2,
-    top: (240 - 190) / 2,
-  },
   takeLines: {
     position: 'absolute',
-    width: ENVELOPE_W - 92,
     alignItems: 'center',
-    gap: 9,
   },
   takeLine: {
     height: 5,
@@ -326,9 +416,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(190,111,124,0.34)',
   },
   envelope: {
-    width: ENVELOPE_W,
-    height: ENVELOPE_H,
-    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: 'rgba(102,67,80,0.16)',
     overflow: 'hidden',
@@ -342,7 +429,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    top: ENVELOPE_H / 2,
     height: StyleSheet.hairlineWidth,
     backgroundColor: 'rgba(102,67,80,0.10)',
   },
@@ -351,18 +437,12 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: ENVELOPE_H * 0.62,
-    borderBottomLeftRadius: 120,
-    borderBottomRightRadius: 120,
     borderBottomWidth: 1,
     borderColor: 'rgba(102,67,80,0.12)',
     overflow: 'hidden',
     transformOrigin: 'top',
   },
   sealShadow: {
-    width: SEAL,
-    height: SEAL,
-    borderRadius: SEAL / 2,
     // Opaque backing so the shadow has a shape to cast from, and an elevation
     // so Android renders one at all.
     backgroundColor: colors.rose,
@@ -380,19 +460,13 @@ const styles = StyleSheet.create({
   },
   gleam: {
     position: 'absolute',
-    top: SEAL * 0.18,
-    left: SEAL * 0.2,
-    width: 16,
-    height: SEAL * 0.7,
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.5)',
   },
-  sparkleOne: { position: 'absolute', top: 26, right: 42 },
-  sparkleTwo: { position: 'absolute', bottom: 34, left: 52 },
-
   wordsWrap: {
     alignItems: 'center',
     gap: 6,
+    width: '100%',
   },
   sealed: {
     ...textStyles.title,
@@ -406,6 +480,11 @@ const styles = StyleSheet.create({
     color: night.textDim,
     textAlign: 'center',
     maxWidth: 300,
+  },
+  accessibleContinue: {
+    width: '100%',
+    maxWidth: 300,
+    marginTop: 14,
   },
 
   generatingGlow: {
@@ -482,5 +561,12 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 340,
     marginTop: 14,
+    gap: 10,
+  },
+  safeClose: {
+    ...textStyles.caption,
+    color: night.textFaint,
+    textAlign: 'center',
+    marginTop: 2,
   },
 });

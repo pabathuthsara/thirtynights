@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { BellRing, Check } from 'lucide-react-native';
 
@@ -13,34 +13,89 @@ import { colors, HIT_TARGET, radii, shadows, surfaces, textStyles, typography, w
 const hours = [19, 20, 21, 22, 23, 0, 1, 2];
 const minutes = [0, 15, 30, 45];
 
-export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
+export type OnboardingNotificationSetup = {
+  nightIndex: number;
+  question: string;
+  onAllow: () => Promise<void>;
+  onSkip: () => void;
+};
+
+function NotificationPreviewCard({ hour, minute, nightIndex, question }: {
+  hour: number;
+  minute: number;
+  nightIndex: number;
+  question: string;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={`Notification preview for Night ${nightIndex} at ${formatClock(hour, minute)}. ${question}`}
+      style={styles.notificationCard}
+    >
+      <View style={styles.notificationTop}>
+        <View style={styles.notificationBadge}><Sparkle size={9} color={colors.white} /></View>
+        <Text style={styles.notificationApp}>THIRTY NIGHTS</Text>
+        <Text style={styles.notificationNow}>{formatClock(hour, minute)}</Text>
+      </View>
+      <Text style={styles.notificationTitle}>Night {nightIndex}</Text>
+      <Text numberOfLines={2} ellipsizeMode="tail" style={styles.notificationBody}>{question}</Text>
+    </View>
+  );
+}
+
+export function HourPickerScreen({ hour, minute, onChange, onContinue, notification }: {
   hour: number;
   minute: number;
   onChange: (hour: number, minute: number) => void;
   onContinue: () => void;
+  /** Present during first-run setup to combine time selection, education and
+   *  the intentional native permission action on one scroll-safe screen.
+   *  Omit it in Settings and the original save-reminder action is preserved. */
+  notification?: OnboardingNotificationSetup;
 }) {
+  const [allowing, setAllowing] = useState(false);
+  const { width, height, fontScale } = useWindowDimensions();
+  const largeText = fontScale > 1.3;
+  const compact = height < 720 || width < 360 || largeText;
+
   const select = (nextHour: number, nextMinute: number) => {
     if (Platform.OS !== 'web') void Haptics.selectionAsync().catch(() => undefined);
     onChange(nextHour, nextMinute);
   };
 
+  const allowNotification = async () => {
+    if (!notification || allowing) return;
+    setAllowing(true);
+    try {
+      await notification.onAllow();
+    } finally {
+      setAllowing(false);
+    }
+  };
+
   return (
-    <Screen contentStyle={styles.setupScreen}>
+    <Screen contentStyle={[styles.setupScreen, compact && styles.compactSetupScreen]}>
       <Stagger index={0}>
-        <Text style={textStyles.eyebrow}>YOUR HOUR</Text>
-        <Text accessibilityRole="header" style={styles.title}>What time are you usually in bed?</Text>
-        <Text style={styles.body}>The question arrives once, at this time. Change it whenever your nights change.</Text>
+        <Text style={textStyles.eyebrow}>{notification ? 'YOUR QUIET HOUR' : 'YOUR HOUR'}</Text>
+        <Text accessibilityRole="header" style={[styles.title, compact && styles.compactTitle]}>
+          {notification ? 'When should tonight’s question arrive?' : 'What time are you usually in bed?'}
+        </Text>
+        <Text style={styles.body}>
+          {notification
+            ? 'Choose a gentle reminder time. The question stays open all day, so you can answer whenever it feels right.'
+            : 'The question arrives once, at this time. Change it whenever your nights change.'}
+        </Text>
       </Stagger>
 
-      <Stagger index={1} style={styles.clockWrap}>
-        <Glow size={260} color={colors.rose} opacity={0.22} style={styles.clockGlow} />
+      <Stagger index={1} style={[styles.clockWrap, compact && styles.compactClockWrap]}>
+        <Glow size={compact ? 210 : 260} color={colors.rose} opacity={0.22} style={styles.clockGlow} />
         <Sparkle size={14} color={colors.brass} twinkle style={styles.clockSparkle} />
-        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={styles.clock}>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} maxFontSizeMultiplier={1.15} style={[styles.clock, compact && styles.compactClock]}>
           {formatClock(hour, minute)}
         </Text>
 
         <Text style={styles.pickerLabel}>HOUR</Text>
-        <View accessibilityRole="radiogroup" style={styles.optionGrid}>
+        <View accessibilityRole="radiogroup" style={[styles.optionGrid, largeText && styles.optionGridLargeText]}>
           {hours.map((value) => {
             const selected = hour === value;
             return (
@@ -50,9 +105,9 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
                 accessibilityState={{ checked: selected }}
                 accessibilityLabel={formatClock(value, minute)}
                 onPress={() => select(value, minute)}
-                style={({ pressed }) => [styles.chip, styles.gridChip, selected && styles.chipSelected, pressed && styles.chipPressed]}
+                style={({ pressed }) => [styles.chip, styles.gridChip, largeText && styles.gridChipLargeText, selected && styles.chipSelected, pressed && styles.chipPressed]}
               >
-                <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
+                <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
                   {formatClock(value, 0).replace(':00', '')}
                 </Text>
               </Pressable>
@@ -61,7 +116,7 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
         </View>
 
         <Text style={styles.pickerLabel}>MINUTES</Text>
-        <View accessibilityRole="radiogroup" style={styles.optionGrid}>
+        <View accessibilityRole="radiogroup" style={[styles.optionGrid, largeText && styles.optionGridLargeText]}>
           {minutes.map((value) => {
             const selected = minute === value;
             return (
@@ -71,9 +126,9 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
                 accessibilityState={{ checked: selected }}
                 accessibilityLabel={`${value} minutes past`}
                 onPress={() => select(hour, value)}
-                style={({ pressed }) => [styles.chip, styles.gridChip, selected && styles.chipSelected, pressed && styles.chipPressed]}
+                style={({ pressed }) => [styles.chip, styles.gridChip, largeText && styles.gridChipLargeText, selected && styles.chipSelected, pressed && styles.chipPressed]}
               >
-                <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
+                <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
                   :{String(value).padStart(2, '0')}
                 </Text>
               </Pressable>
@@ -82,9 +137,40 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue }: {
         </View>
       </Stagger>
 
-      <Stagger index={2}>
-        <Button onPress={onContinue}>Set reminder for {formatClock(hour, minute)}</Button>
-      </Stagger>
+      {notification ? (
+        <>
+          <Stagger index={2}>
+            <View style={styles.previewSection}>
+              <View style={styles.previewHeading}>
+                <View style={styles.previewIcon}>
+                  <BellRing size={17} strokeWidth={1.9} color={colors.roseText} />
+                </View>
+                <View style={styles.previewCopy}>
+                  <Text style={styles.previewTitle}>One private reminder</Text>
+                  <Text style={styles.previewBody}>No promotions. Never more than once a day.</Text>
+                </View>
+              </View>
+              <NotificationPreviewCard
+                hour={hour}
+                minute={minute}
+                nightIndex={notification.nightIndex}
+                question={notification.question}
+              />
+            </View>
+          </Stagger>
+
+          <Stagger index={3} style={styles.actionStack}>
+            <Button icon={Check} loading={allowing} onPress={() => void allowNotification()}>
+              Allow one nightly reminder
+            </Button>
+            <TextButton onPress={() => { if (!allowing) notification.onSkip(); }}>Not now</TextButton>
+          </Stagger>
+        </>
+      ) : (
+        <Stagger index={2}>
+          <Button onPress={onContinue}>Set reminder for {formatClock(hour, minute)}</Button>
+        </Stagger>
+      )}
     </Screen>
   );
 }
@@ -114,15 +200,7 @@ export function NotificationPrimerScreen({ hour, minute, nightIndex, question, o
           <BellRing size={52} strokeWidth={1.5} color={colors.roseText} />
         </View>
         {/* A preview of the real thing, using the user's actual next question. */}
-        <View style={styles.notificationCard}>
-          <View style={styles.notificationTop}>
-            <View style={styles.notificationBadge}><Sparkle size={9} color={colors.white} /></View>
-            <Text style={styles.notificationApp}>THIRTY NIGHTS</Text>
-            <Text style={styles.notificationNow}>{formatClock(hour, minute)}</Text>
-          </View>
-          <Text style={styles.notificationTitle}>Night {nightIndex}</Text>
-          <Text numberOfLines={2} style={styles.notificationBody}>{question}</Text>
-        </View>
+        <NotificationPreviewCard hour={hour} minute={minute} nightIndex={nightIndex} question={question} />
       </Stagger>
 
       <Stagger index={2} style={styles.actionStack}>
@@ -152,12 +230,23 @@ const styles = StyleSheet.create({
     gap: 24,
     paddingBottom: 28,
   },
+  compactSetupScreen: {
+    gap: 18,
+    paddingHorizontal: 20,
+    paddingBottom: 22,
+  },
   title: {
     ...textStyles.title,
     fontSize: 38,
     lineHeight: 45,
     marginTop: 12,
     marginBottom: 14,
+  },
+  compactTitle: {
+    fontSize: 33,
+    lineHeight: 39,
+    marginTop: 9,
+    marginBottom: 10,
   },
   body: {
     ...textStyles.bodySmall,
@@ -174,6 +263,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...shadows.floating,
   },
+  compactClockWrap: {
+    gap: 9,
+    padding: 17,
+  },
   clockGlow: { top: -110, left: -20 },
   clockSparkle: { position: 'absolute', top: 18, right: 22 },
   clock: {
@@ -182,6 +275,10 @@ const styles = StyleSheet.create({
     fontSize: 58,
     lineHeight: 68,
     letterSpacing: -1.5,
+  },
+  compactClock: {
+    fontSize: 48,
+    lineHeight: 56,
   },
   pickerLabel: {
     ...textStyles.eyebrow,
@@ -196,6 +293,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  optionGridLargeText: {
+    justifyContent: 'space-between',
+  },
   chip: {
     minHeight: HIT_TARGET,
     paddingHorizontal: 8,
@@ -209,6 +309,9 @@ const styles = StyleSheet.create({
   gridChip: {
     flexBasis: '22%',
     flexGrow: 1,
+  },
+  gridChipLargeText: {
+    flexBasis: '46%',
   },
   chipPressed: {
     opacity: 0.72,
@@ -244,6 +347,45 @@ const styles = StyleSheet.create({
     ...shadows.floating,
   },
   bellGlow: { top: -47, left: -47 },
+  previewSection: {
+    gap: 13,
+    padding: 15,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(184,134,53,0.2)',
+    backgroundColor: surfaces.card,
+    ...shadows.soft,
+  },
+  previewHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  previewIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(190,111,124,0.24)',
+    backgroundColor: surfaces.selected,
+  },
+  previewCopy: {
+    flex: 1,
+    gap: 1,
+  },
+  previewTitle: {
+    color: colors.bone,
+    fontFamily: typography.serifMedium,
+    fontSize: 16,
+    lineHeight: 21,
+  },
+  previewBody: {
+    ...textStyles.caption,
+    color: colors.paperDim,
+    fontSize: 12,
+  },
   notificationCard: {
     width: '100%',
     borderRadius: radii.lg,

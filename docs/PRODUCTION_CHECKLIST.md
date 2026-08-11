@@ -6,7 +6,7 @@
 > 3 (Google Sign-In) and the Play halves of 5, 7 and 8 are the parts that are
 > not covered there.
 
-Last updated: 2026-08-06
+Last updated: 2026-08-11
 
 Everything in this file needs a human: an account owner, a credential, a
 physical device, or a design asset. Code-side work that could be done without
@@ -58,7 +58,9 @@ Then fill the two placeholders in `eas.json` → `submit.production.ios`:
 ## 2. Supabase
 
 - [ ] **2.1** Production project created; note the project ref.
-- [ ] **2.2** Run all four migrations against it in order:
+- [ ] **2.2** Run every committed migration against it in order. The newest
+      entitlement/consent migration must ship together with the updated worker
+      and client; it is not yet applied to the hosted project:
   ```bash
   npx supabase link --project-ref <ref>
   npx supabase db push
@@ -82,11 +84,14 @@ Then fill the two placeholders in `eas.json` → `submit.production.ios`:
 - [ ] **2.7** Custom SMTP configured (the built-in sender is rate-limited to a
       handful of mails an hour and will silently fail in beta).
 - [ ] **2.8** CAPTCHA + rate limits enabled on auth endpoints.
+- [ ] **2.8a** Enable Auth leaked-password protection; the hosted security
+      advisor currently reports it disabled.
 - [ ] **2.9** Point-in-time recovery / backups enabled.
-- [ ] **2.10** Deploy both Edge Functions:
+- [x] **2.10** Deploy the Edge Functions (verified active 2026-08-10):
   ```bash
   npx supabase functions deploy revenuecat-webhook
   npx supabase functions deploy delete-account
+  npx supabase functions deploy apple-identity
   ```
 - [ ] **2.11** Set function secrets (never in Git):
   ```bash
@@ -131,12 +136,13 @@ usually lifts Google conversion on iOS noticeably. Not required to ship.
 
 ---
 
-## 4. Sign in with Apple — the deletion blocker
+## 4. Sign in with Apple — configuration and deletion verification
 
-**This will get you rejected as-is.** Guideline 5.1.1(v) requires that deleting
-an account also revokes the Apple token. `supabase/functions/delete-account`
-currently deletes the Supabase user, storage objects and the RevenueCat
-subscriber, but never calls Apple's revocation endpoint.
+The revocation implementation is in `_shared/apple.ts`, `apple-identity`, and
+`delete-account`, and both authenticated functions are deployed. Guideline
+5.1.1(v) still blocks launch until the owner configures the Apple secrets and a
+physical Apple-linked deletion proves that the refresh token is stored and
+revoked before Supabase identity deletion.
 
 To finish it I need from you:
 
@@ -147,10 +153,9 @@ To finish it I need from you:
       `npx supabase secrets set APPLE_PRIVATE_KEY=...` — do not paste it into
       chat or commit it.
 
-Once those exist as function secrets, tell me and I will implement the
-client-secret JWT and the `POST https://appleid.apple.com/auth/revoke` call
-inside the delete function, plus storing the Apple refresh token at sign-in so
-there is something to revoke.
+Once those exist as function secrets, redeploy the two authenticated functions
+and exercise the signed physical-device deletion scenario. Do not mark this
+gate complete from an unauthenticated 401 probe alone.
 
 ---
 
@@ -166,8 +171,16 @@ there is something to revoke.
 - [ ] **5.4** Enable webhook HMAC signing; point the webhook at the deployed
       `revenuecat-webhook` function; set the Authorization header to the same
       random value you used in 2.11.
-- [ ] **5.5** Set prices and territories in both stores.
-- [ ] **5.6** Sandbox-test: purchase, restore on a second device, refund, and
+- [ ] **5.5** Set Project → General → Restore behavior to **Transfer to new App
+      User ID**. The server accepts a `TRANSFER` only when RevenueCat's alias
+      arrays resolve to exactly one existing permanent Supabase UUID as the
+      destination and at least one existing permanent source UUID that owns
+      ledger rows. Ambiguous or anonymous-only transfers fail closed because
+      the event does not contain enough transaction detail to reconstruct them;
+      support must recover the original permanent account before retrying.
+- [ ] **5.6** Set prices and territories in both stores.
+- [ ] **5.7** Sandbox-test: purchase, restore on a second device, transfer
+      between two test accounts, refund 90 while 30 remains granted, and
       confirm access flips only after the server grant lands (the client stays
       "server-verifying" by design).
 
@@ -178,9 +191,9 @@ there is something to revoke.
 - [ ] **6.1** Dedicated OpenAI project with billing and a spend limit.
 - [ ] **6.2** Confirm the two model IDs in `worker/.env.example` are available on
       your account — `gpt-4o-transcribe-diarize` and `gpt-5.6`. Adjust if not.
-- [ ] **6.3** Build and deploy the container. It now exposes `GET /healthz`;
-      wire that to your host's liveness probe (Cloud Run, Fly, Render all read
-      `PORT` automatically).
+- [ ] **6.3** Railway is healthy on the prior worker image and `/healthz` is
+      wired. Build and deploy the updated consent-enforcing container together
+      with migration `20260810165730`; do not deploy either half alone.
 - [ ] **6.4** Put `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and
       `OPENAI_API_KEY` in the **host secret manager**, never in the image.
 - [ ] **6.5** Set an alert on `select count(*) from private.report_jobs where
@@ -239,19 +252,23 @@ store assets.
 - [ ] **9.2** Give me the DSN and I will wire `@sentry/react-native`, hook it to
       the existing `ErrorBoundary` (which currently `console.error`s into the
       void in production), and scrub recording paths and email from events.
-- [ ] **9.3** Decide on product analytics. You currently have **zero**
-      measurement, which means the new onboarding and paywall cannot be
-      evaluated at all. Whatever you pick must be declared in 7.3/7.4.
+- [x] **9.3** A privacy-safe, provider-neutral funnel event layer is implemented
+      and unit tested. It rejects recording/question/report text, email,
+      content identifiers, unknown fields, and unbounded free-form values.
+- [ ] **9.4** Choose and connect a production analytics destination, document it
+      in 7.3/7.4, and verify the destination receives only the allowlisted
+      payloads. Until then events remain intentionally on-device/in-process.
 
 ---
 
 ## 10. Before you press submit
 
-- [ ] **10.1** `npm run check` green (typecheck + tests + worker + web export).
-- [ ] **10.2** `npm run doctor` 20/20.
+- [x] **10.1** `npm run check` green (typecheck + 102 tests + worker + web export),
+      verified 2026-08-11 on this worktree.
+- [x] **10.2** `npm run doctor` 20/20, verified 2026-08-11.
 - [ ] **10.3** `npm run audit:release` clean at high/critical.
 - [ ] **10.4** Run the full journey on a **physical** iPhone and Android phone:
-      onboard → intentions → hour → notification → plan → record → seal →
+      two-page onboarding → reminder/notification choice → record → seal →
       reward → 7 nights → report → paywall → purchase → restore.
 - [ ] **10.5** Test with the system font size at maximum and with
       "Reduce Motion" on.
@@ -286,4 +303,4 @@ store assets.
   a `GET /healthz` liveness endpoint, a Docker `HEALTHCHECK`, and consecutive
   failure tracking. A hung provider used to hold a job lease for 30 minutes.
 - `eas.json` submit block scaffolded for both stores.
-- Expo SDK patch drift resolved (`expo` 57.0.10, `expo-auth-session` 57.0.6).
+- Expo SDK patch drift resolved (`expo` 57.0.12, `expo-auth-session` 57.0.6).

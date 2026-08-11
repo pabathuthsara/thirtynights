@@ -32,12 +32,28 @@ npm run db:stop
 
 The database gate must apply every forward migration, pass lint at error level, and pass every pgTAP assertion. Run the same sequence in CI. A failure blocks beta promotion.
 
+Current worktree evidence (2026-08-11): `npm run check` passes with 102 tests,
+the worker check and production web export; Expo Doctor passes 20/20. The
+worker production dependency audit is clean. The app audit still reports 12
+high and 9 moderate Expo/Metro build-tool transitive advisories; npm's proposed
+automatic fix is a breaking Expo/React Native downgrade and is not accepted.
+The Docker-backed database command cannot run on this machine because neither
+Docker nor Podman is installed; the complete migration chain and new SQL
+assertions passed in disposable PostgreSQL, but this does not replace the CI
+Supabase-stack gate.
+
+The iOS development build was also rendered on a 375×667 short-phone simulator
+at standard, accessibility-medium, and maximum Dynamic Type. The first-run CTA
+remained reachable and oversized content scrolled without overlapping the
+footer. Physical iOS/Android and 320×568-equivalent verification remain release
+gates below.
+
 ## 3. Configuration gate
 
 For the intended EAS environment, verify that all public values are real and environment-specific:
 
 - Supabase URL and publishable key.
-- RevenueCat public iOS/Android SDK keys and final consumable product IDs.
+- RevenueCat public iOS/Android SDK keys and final non-consumable product IDs.
 - HTTPS privacy, terms, support, and account-deletion URLs.
 - `EXPO_PUBLIC_APP_ENV` matches development, preview/staging, or production.
 
@@ -50,7 +66,9 @@ Production must not contain placeholder provider values, sample reports/archive 
 - Apply migrations from zero in an isolated local stack, then on staging before production.
 - Confirm `private` tables are not exposed through the Data API and mobile roles cannot write purchases, grants, report readiness, refunds, webhook events, or deletion audits.
 - Run two-user and anonymous-account RLS/Storage tests. Anonymous users must not upload raw recordings.
-- Replay a signed RevenueCat fixture and confirm one event outcome, one ledger transition, and one chapter grant.
+- Replay signed RevenueCat fixtures and confirm 30 + 90 grants, 90 → 30 → trial refund/revocation fallback, idempotent retries, and one-owner transaction enforcement.
+- Replay a RevenueCat `TRANSFER` fixture between two permanent Supabase UUIDs and confirm the source loses access and the destination gains it. The handler deliberately rejects ambiguous, anonymous-only, unknown-source, or multi-destination alias sets because a transfer event contains no product/transaction IDs from which to reconstruct ownership safely.
+- Grant then withdraw processing consent from a permanent test account. Confirm Storage rejects later recording uploads, queued/leased report jobs become `cancelled`, the worker does not lease them, and re-consent is required before retry.
 - Run synthetic 7-, 30-, 60-, and 90-night report fixtures through lease, hash verification, transcription adapter, strict report validation, clip rendering, publish, retry, and worker-crash recovery.
 - Confirm logs contain trace IDs, timing, byte counts, status, and model versions only—never audio, transcript text, selected quotes, signed URLs, or local paths.
 

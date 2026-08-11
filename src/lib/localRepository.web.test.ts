@@ -19,7 +19,7 @@ vi.mock('@/services/audioFiles', () => ({
   persistRecording: vi.fn(async () => ({ uri: 'blob:recording', byteSize: 2048, checksum: 'a'.repeat(64) })),
 }));
 
-import { completeOutboxOperation, failOutboxOperation, pendingOutboxOperations, sealNightLocally } from '@/lib/localRepository.web';
+import { completeOutboxOperation, failOutboxOperation, pendingOutboxOperations, rebindLocalCloudIdentity, sealNightLocally } from '@/lib/localRepository.web';
 import type { AppSnapshot, Night } from '@/types';
 
 function snapshot(): AppSnapshot {
@@ -36,6 +36,7 @@ function snapshot(): AppSnapshot {
   return {
     schemaVersion: 2,
     onboarded: true,
+    onboardingVersion: 2,
     reminderHour: 22,
     reminderMinute: 0,
     timezone: 'Asia/Colombo',
@@ -90,5 +91,56 @@ describe('web seal outbox', () => {
 
     expect(await pendingOutboxOperations()).toEqual([]);
     expect(await pendingOutboxOperations(true)).toHaveLength(1);
+  });
+
+  it('fails closed when a different cloud owner is adopted', async () => {
+    const previous = snapshot();
+    previous.ownerId = 'old-owner';
+    previous.accessTier = 'paid90';
+    previous.processingConsentVersion = 'cloud-processing-v2';
+    previous.currentChapter.targetLength = 90;
+    previous.currentChapter.length = 90;
+    previous.currentChapter.accessThrough = 90;
+    previous.currentChapter.purchaseStatus = 'granted';
+    previous.currentChapter.nights[0] = {
+      ...previous.currentChapter.nights[0]!,
+      status: 'sealed',
+      recordedAt: '2026-08-09T20:00:00.000Z',
+      localUri: 'blob:old-owner-recording',
+      checksum: 'b'.repeat(64),
+      byteSize: 2048,
+      backedUp: true,
+      backupState: 'backed-up',
+    };
+    previous.reports = [{
+      id: 'old-report',
+      chapterId: previous.currentChapter.id,
+      checkpointNight: 7,
+      status: 'ready',
+      sections: [],
+      reportVersion: 'v1',
+    }];
+    previous.purchaseVerification = {
+      plan: 'paid90',
+      source: 'home_card',
+      status: 'server-verifying',
+      updatedAt: '2026-08-09T20:00:00.000Z',
+    };
+
+    const next = await rebindLocalCloudIdentity(previous, 'new-owner', 'authenticated', 'new@example.com');
+
+    expect(next).toMatchObject({
+      ownerId: 'new-owner',
+      authState: 'authenticated',
+      email: 'new@example.com',
+      accessTier: 'trial',
+      completedChapters: [],
+      reports: [],
+    });
+    expect(next.processingConsentVersion).toBeUndefined();
+    expect(next.purchaseVerification).toBeUndefined();
+    expect(next.currentChapter.id).not.toBe(previous.currentChapter.id);
+    expect(next.currentChapter.nights.some((night) => Boolean(night.recordedAt || night.localUri || night.storagePath))).toBe(false);
+    expect(await pendingOutboxOperations(true)).toEqual([]);
   });
 });

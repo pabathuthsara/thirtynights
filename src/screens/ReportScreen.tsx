@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, GestureResponderEvent, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, GestureResponderEvent, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pause, Play, Quote, RotateCcw, Share2 } from 'lucide-react-native';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
@@ -14,13 +14,14 @@ import { chapterTitle, isRecorded, totalVoiceSeconds } from '@/domain/stats';
 import { formatDuration } from '@/domain/format';
 import { colors, gradients, radii, shadows, surfaces, textStyles, typography, weight } from '@/theme';
 import type { Chapter, Report, ReportEvidence } from '@/types';
+import { trackAnalyticsEvent } from '@/services/analytics';
 
 function clockLabel(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`;
 }
 
-export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolveNightAudio, onShare, onRetry, onContinue }: {
+export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolveNightAudio, onShare, onRetry, onSetup, onContinue }: {
   chapter: Chapter;
   report?: Report;
   onBack: () => void;
@@ -28,8 +29,10 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
   onResolveNightAudio?: (nightId: string) => Promise<string | undefined>;
   onShare: () => void;
   onRetry?: () => Promise<void>;
+  onSetup?: () => void;
   onContinue?: () => void;
 }) {
+  const { width } = useWindowDimensions();
   const player = useAudioPlayer();
   const status = useAudioPlayerStatus(player);
   const evidencePlayer = useAudioPlayer();
@@ -45,12 +48,17 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
   const loadedSource = useRef<string | null>(null);
   const evidenceSource = useRef<string | null>(null);
   const evidenceStop = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listenedTracked = useRef(false);
   const [waveWidth, setWaveWidth] = useState(1);
 
   const recorded = chapter.nights.filter(isRecorded);
   const minutes = Math.max(1, Math.round(totalVoiceSeconds(recorded) / 60));
   const checkpoint = report?.checkpointNight ?? (recorded.length >= 30 ? 30 : 7);
   const progress = status.duration ? status.currentTime / status.duration : 0;
+
+  useEffect(() => {
+    trackAnalyticsEvent('checkpoint_report_viewed', { checkpoint });
+  }, [checkpoint]);
 
   /** Resolves once and then resumes — it used to `replace()` on every press,
    *  which silently restarted the report from zero after any pause. */
@@ -69,12 +77,16 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
         loadedSource.current = source;
       }
       player.play();
+      if (!listenedTracked.current) {
+        listenedTracked.current = true;
+        trackAnalyticsEvent('checkpoint_report_listened', { checkpoint });
+      }
     } catch (error) {
       setPlayerError(error instanceof Error ? error.message : 'Report audio could not be played.');
     } finally {
       setLoadingAudio(false);
     }
-  }, [onResolveAudio, player, status.playing]);
+  }, [checkpoint, onResolveAudio, player, status.playing]);
 
   const restart = useCallback(() => {
     player.seekTo(0);
@@ -86,6 +98,12 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
     const fraction = Math.min(1, Math.max(0, event.nativeEvent.locationX / waveWidth));
     player.seekTo(fraction * status.duration);
   }, [player, status.duration, waveWidth]);
+
+  const adjustAudio = useCallback((direction: 'forward' | 'back') => {
+    if (!loadedSource.current || !status.duration) return;
+    const delta = direction === 'forward' ? 15 : -15;
+    player.seekTo(Math.min(status.duration, Math.max(0, status.currentTime + delta)));
+  }, [player, status.currentTime, status.duration]);
 
   /** Plays the exact moment a quote came from, then stops at its end. */
   const playEvidence = useCallback(async (evidence: ReportEvidence) => {
@@ -132,7 +150,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
           <Sparkle size={13} color={colors.brass} twinkle style={styles.cardSparkle} />
           <WindowGrid
             nights={revealedNights.slice(Math.max(0, checkpoint - 30), checkpoint)}
-            maxWidth={300}
+            maxWidth={Math.min(300, Math.max(210, width - 96))}
             padToSheet={checkpoint > 7}
           />
         </View>
@@ -174,7 +192,15 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
                 <Pressable
                   accessibilityRole="adjustable"
                   accessibilityLabel="Report audio position"
-                  accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}
+                  accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100), text: `${clockLabel(status.currentTime)} of ${clockLabel(status.duration)}` }}
+                  accessibilityActions={[
+                    { name: 'increment', label: 'Forward 15 seconds' },
+                    { name: 'decrement', label: 'Back 15 seconds' },
+                  ]}
+                  onAccessibilityAction={(event) => {
+                    if (event.nativeEvent.actionName === 'increment') adjustAudio('forward');
+                    if (event.nativeEvent.actionName === 'decrement') adjustAudio('back');
+                  }}
                   onPress={scrub}
                   onLayout={(event) => setWaveWidth(Math.max(1, event.nativeEvent.layout.width))}
                   style={styles.wave}
@@ -254,7 +280,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
             </View>
             <View style={styles.actions}>
               <Button variant="paper" icon={Share2} onPress={onShare}>Share reflection</Button>
-              {onContinue ? <Button variant="outline" onPress={onContinue}>Continue the thread</Button> : null}
+              {onContinue ? <Button variant="outline" onPress={onContinue}>Unlock nights 8–30</Button> : null}
             </View>
           </Stagger>
         </>
@@ -276,6 +302,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
                 Retry report
               </Button>
             ) : null}
+            {onSetup ? <Button variant="outline" onPress={onSetup}>Review reflection setup</Button> : null}
           </View>
         </Stagger>
       ) : (
@@ -288,7 +315,8 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
                 ? 'The app will synchronize the real report when cloud processing finishes. No sample conclusions are shown.'
                 : 'A report can be queued once the required recordings are backed up and cloud-processing consent is confirmed.'}
             </Text>
-            {onContinue && checkpoint === 7 ? <Button variant="paper" onPress={onContinue}>Continue the thread</Button> : null}
+            {onSetup ? <Button variant="paper" onPress={onSetup}>Set up my reflection</Button> : null}
+            {onContinue && checkpoint === 7 ? <Button variant="outline" onPress={onContinue}>Unlock nights 8–30</Button> : null}
           </View>
         </Stagger>
       )}

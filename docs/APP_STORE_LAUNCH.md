@@ -1,9 +1,10 @@
 # Thirty Nights — App Store Launch Guide
 
-Last updated: 2026-08-06 · Supabase project `hnlanyoyktxpllgxgorz`
+Last updated: 2026-08-11 · Supabase project `hnlanyoyktxpllgxgorz`
 
 The authoritative document for the v1 launch. **iOS only.** Google Sign-In is
-removed from the UI; sign-in is Apple + email link.
+hidden on iOS (and remains available on Android); sign-in is Apple or a
+verified email plus password.
 `docs/PRODUCTION_CHECKLIST.md` is kept only for the later Android release.
 
 Work top to bottom. Phases 2–6 can overlap; Phase 1 gates almost everything.
@@ -12,12 +13,15 @@ Work top to bottom. Phases 2–6 can overlap; Phase 1 gates almost everything.
 
 ## Where you actually are
 
-### ✅ Done and verified against the live project (2026-08-06)
+### ✅ Done and verified against the live project (2026-08-10)
 
 Verified by probing the REST and Auth APIs directly, not by assumption:
 
 - **Supabase production project exists** and is reachable
-- **All five migrations applied.** All eight RPCs resolve —
+- **The seven baseline migrations through `20260809164553` are applied.** The new
+  `20260810165730_authoritative_entitlements_and_processing_consent.sql`
+  migration is validated locally but deliberately not live until the matching
+  client and Railway worker can be promoted together. The current eight RPCs resolve —
   `initialize_chapter_schedule`, `reconcile_chapter_state`, `sync_sealed_night`,
   `attach_night_audio`, `retry_report`, `process_revenuecat_event`,
   `store_apple_refresh_token`, `get_apple_refresh_token`
@@ -35,7 +39,7 @@ Verified by probing the REST and Auth APIs directly, not by assumption:
 
 | Change | Where |
 |---|---|
-| Google Sign-In button removed | `src/screens/AuthScreen.tsx` |
+| Google hidden on iOS; Android retains its native-appropriate option | `src/screens/AuthScreen.tsx` |
 | Production build no longer requires a Play RevenueCat key | `app.config.ts` |
 | Deletion copy says "the App Store" | `src/screens/SettingsScreen.tsx` |
 | Apple token revocation (guideline 5.1.1(v)) | `_shared/apple.ts`, `apple-identity/`, migration `…145157`, `delete-account` |
@@ -121,9 +125,13 @@ the auth rate limits.
 Project Settings → Database → enable PITR. This app holds the only copy of
 things people cannot re-record.
 
-### Step 2.4 — Deploy the three Edge Functions
+### Step 2.4 — Edge Functions deployed ✅
 
-In your own terminal (this needs a TTY):
+All three functions are ACTIVE in production as of 2026-08-10. Their durable
+JWT/webhook authentication settings are recorded in `supabase/config.toml`.
+Do not redeploy just to test availability.
+
+When a reviewed function source change genuinely needs promotion, use:
 
 ```powershell
 cd C:\Users\pabat\OneDrive\Documents\thirtynights\thirtynights
@@ -135,15 +143,16 @@ npx supabase functions deploy apple-identity
 
 Never paste that access token into a chat — it is account-wide.
 
-### Step 2.5 — Verify the deploys
+### Step 2.5 — Configure and verify their secrets
 
 ```powershell
 npx supabase functions list
 ```
 
-All three should show as deployed. `apple-identity` will return
-`{"stored":false,"reason":"not_configured"}` until Phase 3 — that is correct
-behaviour, not an error.
+All three list as deployed. Harmless unauthenticated probes correctly return
+401 for the account functions. `revenuecat-webhook` currently returns 503
+because its custom RevenueCat secrets are absent, and cloud deletion safely
+returns 503 before touching data until `REVENUECAT_SECRET_API_KEY` exists.
 
 ---
 
@@ -232,6 +241,11 @@ $2,500/month tracked revenue.
 2. Add an **iOS app**, bundle ID `com.thirtynights.app`
 3. Upload an App Store Connect API key (In-App Purchase role) so RevenueCat can
    validate receipts
+4. In Project → General, set Restore behavior to **Transfer to new App User
+   ID**. A transfer is applied server-side only when RevenueCat identifies one
+   existing permanent Supabase UUID destination and at least one permanent
+   source UUID with ledger rows. Ambiguous or anonymous-only alias sets are
+   deliberately rejected; recover the original account before retrying.
 
 ### Step 4.3 — Import products and create an offering
 
@@ -249,6 +263,8 @@ RevenueCat → Integrations → Webhooks:
 - URL: `https://hnlanyoyktxpllgxgorz.supabase.co/functions/v1/revenuecat-webhook`
 - Enable **HMAC signing**, copy the secret
 - Set an Authorization header to a random 32+ character string you invent
+- Include `TRANSFER` events and test that the old account loses access while
+  the destination account gains the recomputed ledger entitlement.
 
 Then:
 
@@ -502,8 +518,10 @@ Expect 24–48 hours. First submissions sometimes longer.
 - **Sentry** — `ErrorBoundary` currently `console.error`s into the void in
   production. Give me a DSN and I will wire it and scrub recording paths and
   email from events.
-- **Product analytics** — you have zero measurement, so the new onboarding and
-  paywall cannot be evaluated. Whatever you choose must be declared in Step 9.2.
+- **Analytics destination** — the app now has a privacy-safe, unit-tested funnel
+  event contract with no recording/question/report text, email, persistent
+  identity, logging, storage, or network adapter. Choose a production provider,
+  declare it in Step 9.2, and connect only that allowlisted contract.
 
 Neither blocks submission. Both make the first month afterwards much less blind.
 

@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 
 import { reconcileSnapshot } from '@/domain/calendar';
-import { defaultSnapshot, normalizeSnapshot } from '@/lib/snapshot';
+import { defaultSnapshot, normalizeSnapshot, snapshotForCloudIdentity } from '@/lib/snapshot';
 import { persistRecording } from '@/services/audioFiles';
 import type { AppSnapshot, Night } from '@/types';
 
@@ -70,35 +70,10 @@ export async function rebindLocalCloudIdentity(
   if (!snapshot.ownerId || snapshot.ownerId === ownerId) {
     return { ...snapshot, ownerId, authState, email };
   }
-  const currentChapter = {
-    ...snapshot.currentChapter,
-    serverRevision: 0,
-    nights: snapshot.currentChapter.nights.map((night) => !night.recordedAt ? night : {
-      ...night,
-      status: night.status === 'revealed' ? 'sealed' as const : night.status,
-      storagePath: undefined,
-      backedUp: false,
-      backupState: night.localUri && night.checksum && night.byteSize !== undefined
-        ? authState === 'authenticated' ? 'waiting-wifi' as const : 'waiting-account' as const
-        : 'attention' as const,
-      revealAt: undefined,
-    }),
-  };
-  const next: AppSnapshot = { ...snapshot, ownerId, authState, email, currentChapter, reports: [] };
-  const outbox: WebOutboxOperation[] = currentChapter.nights.flatMap((night) => {
-    if (!night.recordedAt || !night.localUri || !night.checksum || night.byteSize === undefined) return [];
-    return [{
-      operation_id: Crypto.randomUUID(),
-      entity_id: night.id,
-      operation: 'seal',
-      payload: sealPayload(next, night),
-      attempts: 0,
-      next_attempt_at: new Date().toISOString(),
-    }];
-  });
+  const next = snapshotForCloudIdentity(snapshot, ownerId, authState, email);
   await serializeWebWrite(() => AsyncStorage.multiSet([
     [WEB_KEY, JSON.stringify(next)],
-    [OUTBOX_KEY, JSON.stringify(outbox)],
+    [OUTBOX_KEY, JSON.stringify([])],
   ]));
   return next;
 }

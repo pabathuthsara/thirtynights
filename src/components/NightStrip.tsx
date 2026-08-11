@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronRight, Play } from 'lucide-react-native';
 
@@ -31,6 +31,9 @@ const RAIL_SHADOW_SPACE = RAIL_PAD_TOP + RAIL_PAD_BOTTOM;
 /** Rule + plate number + state + detail line, at each density. Kept in step
  *  with the caption styles below; the card's height is derived from it. */
 const CAPTION_HEIGHT = { dense: 74, compact: 78, normal: 82 } as const;
+/** The three caption line boxes that grow with Dynamic Type. Decorative rules,
+ *  margins and card padding stay fixed and are already in `CAPTION_HEIGHT`. */
+const CAPTION_SCALABLE_HEIGHT = { dense: 48, compact: 50, normal: 52 } as const;
 
 type CardState = {
   /** The night's real motif, or the blind disc every unearned night wears. */
@@ -66,29 +69,58 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
   maxHeight?: number;
 }) {
   const reducedMotion = useReducedMotion();
+  const { fontScale } = useWindowDimensions();
   const [width, setWidth] = useState(0);
+  const [captionMeasurement, setCaptionMeasurement] = useState({ key: '', overflow: 0 });
   const scroller = useRef<ScrollView>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
+  const nightLayoutKey = useMemo(
+    () => nights.map((night) => `${night.id}:${night.status}:${night.durationSec ?? ''}:${night.expectedLocalDate}`).join('|'),
+    [nights],
+  );
   const cardWidth = Math.round(Math.min(250, Math.max(172, width * 0.62)));
-  const captionHeight = dense ? CAPTION_HEIGHT.dense : compact ? CAPTION_HEIGHT.compact : CAPTION_HEIGHT.normal;
+  const density = dense ? 'dense' : compact ? 'compact' : 'normal';
+  const captionHeight = CAPTION_HEIGHT[density];
+  const captionScaleReserve = Math.max(0, fontScale - 1) * CAPTION_SCALABLE_HEIGHT[density];
   const chrome = CARD_PAD_TOP + MOUNT_INSET + captionHeight + CARD_PAD_BOTTOM;
+  const hasHeightBudget = maxHeight !== undefined;
+  const measurementKey = `${width}:${fontScale}:${compact}:${dense}:${canRecord}:${nightLayoutKey}`;
+  const measuredCaptionOverflow = captionMeasurement.key === measurementKey ? captionMeasurement.overflow : 0;
 
   // Art is the first thing to give when the screen is short, and the caption
   // never is: a half-cut "14s" reads as a rendering fault, small artwork reads
   // as a small card.
   const artFromWidth = cardWidth * (dense ? 0.5 : compact ? 0.56 : 0.6);
-  const artFromHeight = maxHeight
-    ? maxHeight - SPINE_GAP - SPINE_HEIGHT - RAIL_SHADOW_SPACE - chrome
+  const artFromHeight = hasHeightBudget
+    ? maxHeight - SPINE_GAP - SPINE_HEIGHT - RAIL_SHADOW_SPACE
+      - chrome - captionScaleReserve - measuredCaptionOverflow
     : Number.POSITIVE_INFINITY;
-  // The 76 floor keeps art legible, but it must not beat the budget the screen
-  // actually has: a card taller than its slot overflowed the frame and laid the
-  // spine's dots across the stats divider below. Give way to the height when
-  // there is genuinely less of it, down to a hard 48.
-  const artFloor = maxHeight ? Math.min(76, Math.max(48, artFromHeight)) : 76;
-  const artSize = Math.round(Math.max(artFloor, Math.min(artFromWidth, artFromHeight)));
-  const cardHeight = chrome + artSize;
+  // There is deliberately no minimum once a real height budget exists. The old
+  // 48pt floor could make the strip taller than that budget on a 320x568 device
+  // or with 200% text. The image remains square while yielding every available
+  // point to readable copy and the card remains the full touch target.
+  const boundedArt = Math.max(hasHeightBudget ? 0 : 76, Math.min(artFromWidth, artFromHeight));
+  // Rounding down is important when height-bound: rounding a fractional final
+  // point upward is enough to put the rail back outside its parent on web.
+  const artSize = hasHeightBudget ? Math.floor(boundedArt) : Math.round(boundedArt);
+  const cardHeight = chrome + captionScaleReserve + measuredCaptionOverflow + artSize;
   const step = cardWidth + GAP;
+
+  // Platform font metrics and a wrapped CTA can be a little taller than the
+  // line-height estimate above. Measure that difference and trade exactly that
+  // much art for copy instead of letting the rail escape its allotted height.
+  const measureCard = hasHeightBudget ? (actualHeight: number) => {
+    const overflow = Math.ceil(Math.max(0, actualHeight - cardHeight));
+    if (!overflow) return;
+    setCaptionMeasurement((current) => {
+      const currentOverflow = current.key === measurementKey ? current.overflow : 0;
+      const nextOverflow = Math.max(currentOverflow, overflow);
+      return current.key === measurementKey && current.overflow === nextOverflow
+        ? current
+        : { key: measurementKey, overflow: nextOverflow };
+    });
+  } : undefined;
 
   // The strip opens on the night that matters: tonight, or the last one kept if
   // the chapter is already behind you.
@@ -154,6 +186,7 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
               artSize={artSize}
               compact={compact}
               dense={dense}
+              largeText={fontScale >= 1.6}
               // The first night still ahead of you is tomorrow: the only future
               // card that wears wax, so there is exactly one thing to wonder
               // about rather than a row of them.
@@ -166,6 +199,7 @@ export function NightStrip({ nights, canRecord, newlyEarned, onPressNight, onRec
                 outputRange: [0, 1, 0],
                 extrapolate: 'clamp',
               })}
+              onMeasure={measureCard}
               onPress={() => (night.status === 'today' && canRecord ? onRecord() : onPressNight(night))}
             />
           ))}
@@ -233,18 +267,20 @@ function MountCorners({ tone, waxed }: { tone: string; waxed: boolean }) {
   );
 }
 
-function NightCard({ night, width, height, artSize, compact, dense, isTomorrow, isNew, canRecord, reducedMotion, offset, onPress }: {
+function NightCard({ night, width, height, artSize, compact, dense, largeText, isTomorrow, isNew, canRecord, reducedMotion, offset, onMeasure, onPress }: {
   night: Night;
   width: number;
   height: number;
   artSize: number;
   compact: boolean;
   dense: boolean;
+  largeText: boolean;
   isTomorrow: boolean;
   isNew: boolean;
   canRecord: boolean;
   reducedMotion: boolean;
   offset: Animated.AnimatedInterpolation<number>;
+  onMeasure?: (height: number) => void;
   onPress: () => void;
 }) {
   const state = cardState(night, isTomorrow);
@@ -305,6 +341,7 @@ function NightCard({ night, width, height, artSize, compact, dense, isTomorrow, 
         accessibilityRole="button"
         accessibilityLabel={label}
         onPress={onPress}
+        onLayout={onMeasure ? (event) => onMeasure(event.nativeEvent.layout.height) : undefined}
         style={({ pressed }) => [
           styles.card,
           // `minHeight`, not `height`: the card is guaranteed the room its
@@ -385,7 +422,6 @@ function NightCard({ night, width, height, artSize, compact, dense, isTomorrow, 
         <View style={styles.plateRule} />
         <Text style={[styles.number, isToday && styles.numberToday]}>NIGHT {night.index}</Text>
         <Text
-          numberOfLines={1}
           style={[styles.eyebrow, compact && styles.compactEyebrow, dense && styles.denseEyebrow, isToday && styles.eyebrowToday]}
         >
           {state.eyebrow}
@@ -393,7 +429,7 @@ function NightCard({ night, width, height, artSize, compact, dense, isTomorrow, 
 
         {isToday && canRecord ? (
           <View style={styles.ctaRow}>
-            <Text style={styles.cta}>Open tonight’s letter</Text>
+            <Text style={styles.cta}>{dense && largeText ? 'Open letter' : 'Open tonight’s letter'}</Text>
             <ChevronRight size={13} strokeWidth={2.4} color={colors.roseText} />
           </View>
         ) : night.status === 'revealed' ? (
@@ -403,7 +439,6 @@ function NightCard({ night, width, height, artSize, compact, dense, isTomorrow, 
           </View>
         ) : (
           <Text
-            numberOfLines={1}
             // Durations wear the mono face the app uses for numbers everywhere
             // else; a written-out date stays in the reading face.
             style={[styles.line, state.numeric ? styles.numericLine : null, compact && styles.compactLine]}
@@ -629,9 +664,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     marginTop: 3,
-    height: 17,
+    minHeight: 17,
   },
   cta: {
+    flexShrink: 1,
     color: colors.roseText,
     fontFamily: typography.sans,
     fontWeight: weight.semibold,
