@@ -340,9 +340,12 @@ what turns a silent death into a restart.
 
 ### Step 5.7 — Alert on stuck jobs
 
-```sql
-select count(*) from private.report_jobs where status = 'failed';
-```
+Set `WORKER_ALERT_WEBHOOK_URL` to an HTTPS alert-ingestion endpoint in the host
+secret manager. The worker checks the queue every minute and sends `firing`
+and `resolved` JSON events for jobs overdue by 45 minutes, retrying jobs that
+reach three attempts inside an hour, or any finally failed job. Confirm `/healthz` reports
+`alertWebhookConfigured: true`; tune the documented `WORKER_*` thresholds only
+after observing real production latency.
 
 ---
 

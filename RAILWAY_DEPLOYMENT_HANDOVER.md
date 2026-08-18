@@ -130,6 +130,12 @@ FFMPEG_PATH=ffmpeg
 STORAGE_TIMEOUT_MS=120000
 TRANSCRIPTION_TIMEOUT_MS=300000
 ANALYSIS_TIMEOUT_MS=300000
+WORKER_MONITOR_INTERVAL_MS=60000
+WORKER_STALE_JOB_MINUTES=45
+WORKER_FAILURE_ATTEMPTS=3
+WORKER_FAILURE_WINDOW_MINUTES=60
+WORKER_ALERT_COOLDOWN_MINUTES=30
+WORKER_ALERT_WEBHOOK_URL=<HTTPS alert ingestion endpoint>
 ```
 
 Do not set `PORT`; Railway should inject it.
@@ -151,6 +157,8 @@ Deployment is complete only when all of the following are true:
 - Railway reports a successful, active deployment.
 - Runtime logs contain `worker_health_listening` with Railway's assigned port.
 - `/healthz` returns HTTP 200 and JSON with `status: "ok"`.
+- `/healthz` reports `queueMonitor.status` and confirms
+  `alertWebhookConfigured: true`.
 - There are no startup errors for missing variables, database TLS, FFmpeg, or OpenAI model IDs.
 - Railway metrics show the process remains alive while idle.
 - The service is in Singapore, has exactly one replica, and application sleeping is disabled.
@@ -166,6 +174,10 @@ Healthy startup:
 ```text
 worker_health_listening { port: <Railway PORT> }
 ```
+
+`worker_alert_webhook_unconfigured` means the service can still process jobs,
+but stale-job and repeated-failure alerts have nowhere to go. Set the HTTPS
+webhook before treating the deployment as production-ready.
 
 Common failures:
 

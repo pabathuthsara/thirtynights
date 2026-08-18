@@ -1,7 +1,7 @@
 import type { PaywallSource, ProductPlan, ReportCheckpoint } from '@/types';
 
 export type OnboardingStep = 'value' | 'journey' | 'intentions' | 'reminder' | 'plan';
-export type AccountMethod = 'apple' | 'google' | 'email';
+export type AccountMethod = 'email';
 export type PaywallVariant = 'direct_30' | 'compare_plans';
 export type StoreName = 'app_store' | 'google_play';
 export type MilestoneNight = 3 | 6 | 7 | 8 | 30 | 60 | 90;
@@ -154,7 +154,7 @@ const reportSetupSchema: RuntimeSchema<ReportSetupContext> = {
   afterNight: oneOf([1, 3, 6, 7] as const),
 };
 const accountSchema: RuntimeSchema<AccountContext> = {
-  method: oneOf(['apple', 'google', 'email'] as const),
+  method: oneOf(['email'] as const),
 };
 const consentSchema: RuntimeSchema<ConsentContext> = {
   disclosureVersion: integerBetween(1, 100),

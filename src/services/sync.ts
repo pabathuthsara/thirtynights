@@ -18,6 +18,7 @@ const STANDARD_LIMIT = 6 * 1024 * 1024;
 // The Storage bucket deliberately allows the canonical IANA-style value, so
 // never forward the device-reported MIME type to Supabase.
 const RECORDING_CONTENT_TYPE = 'audio/m4a';
+const BROWSER_RECORDING_UNAVAILABLE = 'browser_recording_unavailable';
 
 function isExistingObjectError(error: { message?: string; status?: number | string; statusCode?: number | string }) {
   const message = error.message?.toLowerCase() ?? '';
@@ -32,6 +33,12 @@ function syncIssue(stage: SyncIssue['stage'], error: unknown): SyncIssue {
   const code = typeof detail?.code === 'string' ? detail.code.toLowerCase() : '';
   const status = Number(detail?.status ?? detail?.statusCode);
 
+  if (code === BROWSER_RECORDING_UNAVAILABLE) {
+    return {
+      stage,
+      message: 'This browser recording is no longer available after the page reloaded. Restart this browser test journey to record it again; native app recordings are not affected.',
+    };
+  }
   if (status === 401 || status === 403 || code.includes('jwt') || message.includes('row-level security') || message.includes('unauthorized')) {
     return { stage, message: 'Your cloud session could not authorize this backup. Reconnect your account, then try again; the recording is still safe on this phone.' };
   }
@@ -54,11 +61,29 @@ function canUpload(snapshot: AppSnapshot, network: Network.NetworkState) {
   return snapshot.backupNetwork === 'wifi-and-cellular' || network.type === Network.NetworkStateType.WIFI;
 }
 
-async function resumableUpload(path: string, file: File, token: string, checksum: string) {
+async function readLocalRecording(uri: string) {
+  if (Platform.OS === 'web') {
+    try {
+      const response = await fetch(uri);
+      if (!response.ok) throw new Error('Browser recording could not be read.');
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength <= 0) throw new Error('Browser recording is empty.');
+      return { bytes, size: bytes.byteLength };
+    } catch {
+      throw { code: BROWSER_RECORDING_UNAVAILABLE };
+    }
+  }
+
+  const file = new File(uri);
+  if (!file.exists || file.size <= 0) return null;
+  return { bytes: await file.arrayBuffer(), size: file.size };
+}
+
+async function resumableUpload(path: string, bytes: ArrayBuffer, token: string, checksum: string) {
   const projectUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
   const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!projectUrl || !publishableKey) throw new Error('Storage is not configured.');
-  const body = new Blob([await file.arrayBuffer()], { type: RECORDING_CONTENT_TYPE });
+  const body = new Blob([bytes], { type: RECORDING_CONTENT_TYPE });
   await new Promise<void>((resolve, reject) => {
     const upload = new Upload(body, {
       endpoint: `${projectUrl}/storage/v1/upload/resumable`,
@@ -78,17 +103,17 @@ async function resumableUpload(path: string, file: File, token: string, checksum
 }
 
 async function uploadNight(chapterId: string, night: Night) {
-  if (!supabase || !night.localUri || !night.checksum || night.byteSize === undefined || Platform.OS === 'web') return night;
-  const file = new File(night.localUri);
-  if (!file.exists) return { ...night, backupState: 'attention' as const };
+  if (!supabase || !night.localUri || !night.checksum || night.byteSize === undefined) return night;
+  const recording = await readLocalRecording(night.localUri);
+  if (!recording) return { ...night, backupState: 'attention' as const };
   const identity = await permanentUploadIdentity();
   if (!identity) return { ...night, backupState: 'waiting-account' as const };
   const { user, session } = identity;
   const path = `${user.id}/${chapterId}/${night.id}.m4a`;
-  if (file.size > STANDARD_LIMIT) {
-    await resumableUpload(path, file, session.access_token, night.checksum);
+  if (recording.size > STANDARD_LIMIT) {
+    await resumableUpload(path, recording.bytes, session.access_token, night.checksum);
   } else {
-    const { error } = await supabase.storage.from('recordings').upload(path, await file.arrayBuffer(), {
+    const { error } = await supabase.storage.from('recordings').upload(path, recording.bytes, {
       contentType: RECORDING_CONTENT_TYPE, cacheControl: '3600', upsert: false,
       metadata: { sha256: night.checksum },
     });

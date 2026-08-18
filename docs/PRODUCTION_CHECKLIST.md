@@ -196,9 +196,12 @@ gate complete from an unauthenticated 401 probe alone.
       with migration `20260810165730`; do not deploy either half alone.
 - [ ] **6.4** Put `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and
       `OPENAI_API_KEY` in the **host secret manager**, never in the image.
-- [ ] **6.5** Set an alert on `select count(*) from private.report_jobs where
-      status = 'failed'` — a polling worker fails silently, and without an alert
-      a dead worker just looks like "reports are taking a while".
+- [ ] **6.5** Set `WORKER_ALERT_WEBHOOK_URL` to the production HTTPS alert
+      destination. Confirm `/healthz` reports `alertWebhookConfigured: true`,
+      then verify the destination accepts the worker's `firing` and `resolved`
+      JSON payloads. Defaults alert on jobs overdue by 45 minutes, retrying jobs
+      that reach three attempts within one hour, or any finally failed job,
+      with a 30-minute reminder cooldown.
 - [ ] **6.6** End-to-end test: seal 7 nights, confirm the mini report generates,
       the clips render, and audio plays back in the app.
 

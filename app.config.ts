@@ -43,12 +43,8 @@ function buildEnvironment() {
   return resolveAppEnvironment(requested);
 }
 
-/**
- * v1 launches on the App Store only, so demanding a Play-side RevenueCat key
- * would block the iOS build on a credential that does not exist yet. Require
- * the key for the platform actually being built; EAS sets EAS_BUILD_PLATFORM,
- * and a local production export (no platform set) is checked against iOS.
- */
+/** Require only the RevenueCat key for the store being built. EAS sets
+ * EAS_BUILD_PLATFORM; a local production export without a platform checks iOS. */
 function requiredStoreKeys() {
   return process.env.EAS_BUILD_PLATFORM === 'android'
     ? (['EXPO_PUBLIC_REVENUECAT_ANDROID_KEY'] as const)
@@ -57,14 +53,12 @@ function requiredStoreKeys() {
 
 /**
  * A free Apple ID signs through a Personal Team, which cannot provision the
- * Sign in with Apple or Push Notifications entitlements — Xcode refuses the
- * build outright rather than dropping them. Setting EXPO_FREE_PROVISIONING=1
- * in a local .env omits both so the app can be side-loaded onto a device for
- * UI and recording testing before Developer Program enrolment completes.
+ * Push Notifications entitlement. Setting EXPO_FREE_PROVISIONING=1 in a local
+ * .env omits it so the app can be side-loaded for UI and recording testing
+ * before Developer Program enrolment completes.
  *
  * Local reminders are unaffected: they are app-owned local notifications and
- * never needed `aps-environment`. Apple sign-in degrades rather than crashes,
- * because `lib/supabase` gates every call on `isAvailableAsync()`.
+ * never needed `aps-environment`.
  */
 function usesFreeProvisioning() {
   return process.env.EXPO_FREE_PROVISIONING === '1';
@@ -130,7 +124,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // declaring tablet support means App Review runs the whole thing on an
       // iPad and rejects what it finds there.
       supportsTablet: false,
-      usesAppleSignIn: !usesFreeProvisioning(),
       bundleIdentifier: identifiers.bundleIdentifier,
       infoPlist: {
         UIBackgroundModes: [],
@@ -144,6 +137,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       package: identifiers.bundleIdentifier,
       predictiveBackGestureEnabled: false,
       permissions: ['RECORD_AUDIO', 'VIBRATE'],
+      // Development clients can contribute overlay permissions through their
+      // own native dependencies. Thirty Nights never draws over other apps, so
+      // remove the permission even if a transitive plugin requests it.
+      blockedPermissions: ['android.permission.SYSTEM_ALERT_WINDOW'],
       adaptiveIcon: {
         foregroundImage: './assets/app/adaptive-icon.png',
         backgroundColor: '#F8EFE7',
@@ -163,7 +160,14 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         resizeMode: 'contain',
         backgroundColor: '#F8EFE7',
       }],
-      ['expo-audio', { microphonePermission: 'Thirty Nights uses the microphone only while you record a nightly answer.' }],
+      ['expo-audio', {
+        microphonePermission: 'Thirty Nights uses the microphone only while you record a nightly answer.',
+        // Recordings happen only while the recording screen is in the
+        // foreground. Disabling both background modes keeps Expo Audio from
+        // adding Android foreground-service permissions and services.
+        enableBackgroundPlayback: false,
+        enableBackgroundRecording: false,
+      }],
       // Android draws the small icon as a mask: anything with real colour in it
       // arrives as a grey blob. `notification-icon.png` is a white silhouette on
       // transparent (see scripts/make_notification_icon.py), tinted at runtime
@@ -177,10 +181,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       'expo-asset',
       'expo-secure-store',
       'expo-sqlite',
-      'expo-apple-authentication',
       'expo-sharing',
       'expo-localization',
-      'expo-web-browser',
       'expo-system-ui',
     ],
     extra: { ...config.extra, appEnvironment: environment },

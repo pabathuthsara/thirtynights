@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const uploadedPaths = vi.hoisted(() => [] as string[]);
 const attachedPaths = vi.hoisted(() => [] as Array<{ nightId: string; path: string }>);
 const reportedIssues = vi.hoisted(() => [] as Array<{ stage: string; message: string }>);
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
 
-vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+vi.mock('react-native', () => ({ Platform: platform }));
 vi.mock('expo-network', () => ({
   NetworkStateType: { WIFI: 'WIFI' },
   getNetworkStateAsync: vi.fn(async () => ({
@@ -119,11 +120,16 @@ function snapshot(): AppSnapshot {
 
 describe('recording synchronization', () => {
   beforeEach(() => {
+    platform.OS = 'ios';
     uploadedPaths.length = 0;
     attachedPaths.length = 0;
     reportedIssues.length = 0;
     vi.mocked(pendingOutboxOperations).mockResolvedValue([]);
     vi.mocked(syncSealedNight).mockResolvedValue({ chapter_id: 'server-chapter', night_id: 'server-night' });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('backs up device-only recordings from current and completed chapters using their own paths', async () => {
@@ -139,6 +145,42 @@ describe('recording synchronization', () => {
     ]);
     expect(result.currentChapter.nights[0]?.backedUp).toBe(true);
     expect(result.completedChapters[0]?.nights[0]?.backedUp).toBe(true);
+  });
+
+  it('backs up browser Blob recordings instead of treating web as offline', async () => {
+    platform.OS = 'web';
+    const fetchRecording = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+    vi.stubGlobal('fetch', fetchRecording);
+    const browserSnapshot = snapshot();
+    browserSnapshot.currentChapter.nights[0]!.localUri = 'blob:current-night';
+    browserSnapshot.completedChapters[0]!.nights[0]!.localUri = 'blob:completed-night';
+
+    const result = await synchronize(browserSnapshot, { ignoreOutboxBackoff: true });
+
+    expect(fetchRecording).toHaveBeenCalledTimes(2);
+    expect(uploadedPaths).toHaveLength(2);
+    expect(result.currentChapter.nights[0]?.backedUp).toBe(true);
+    expect(result.completedChapters[0]?.nights[0]?.backedUp).toBe(true);
+  });
+
+  it('explains when a page reload has invalidated a browser Blob recording', async () => {
+    platform.OS = 'web';
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const browserSnapshot = snapshot();
+    browserSnapshot.completedChapters = [];
+    browserSnapshot.currentChapter.nights[0]!.localUri = 'blob:expired-recording';
+
+    const result = await synchronize(browserSnapshot, {
+      ignoreOutboxBackoff: true,
+      onIssue: (issue) => reportedIssues.push(issue),
+    });
+
+    expect(uploadedPaths).toEqual([]);
+    expect(result.currentChapter.nights[0]?.backedUp).toBe(false);
+    expect(reportedIssues).toEqual([{
+      stage: 'audio',
+      message: expect.stringContaining('no longer available after the page reloaded'),
+    }]);
   });
 
   it('does not upload audio until its sealed metadata is accepted', async () => {

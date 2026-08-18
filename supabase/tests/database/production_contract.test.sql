@@ -1,5 +1,5 @@
 begin;
-select plan(42);
+select plan(43);
 
 select has_column('public','chapters','target_length','chapters expose target_length');
 select has_column('public','chapters','access_through','chapters expose verified access');
@@ -13,6 +13,12 @@ select has_table('private','report_jobs','report jobs are outside the exposed pu
 select has_table('private','transcript_segments','transcripts are outside the exposed public schema');
 select has_column('private','transcript_segments','report_job_id','transcripts are attributable to a cancellable job');
 select has_table('private','processing_consent_events','consent transitions have a private audit trail');
+select has_index(
+  'private',
+  'processing_consent_events',
+  'processing_consent_events_user_id_idx',
+  'consent audit lookups and user deletion use an indexed foreign key'
+);
 select has_table('private','developer_accounts','developer cloud testing is explicitly allow-listed');
 select has_table('public','webhook_events','webhook events support replay protection');
 select has_function('public','sync_sealed_night',array['uuid','jsonb'],'seal RPC exists');

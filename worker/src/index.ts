@@ -13,6 +13,12 @@ import {
   type ReportResult,
   type TranscriptSegment as Segment,
 } from './contracts.js';
+import {
+  queueAlertDecision,
+  queueMonitorSnapshot,
+  queueMonitorThresholds,
+  type QueueMonitorSnapshot,
+} from './monitoring.js';
 
 const { Pool } = pg;
 const required = ['DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'OPENAI_API_KEY'] as const;
@@ -36,6 +42,15 @@ const healthPort = Number(process.env.PORT || process.env.WORKER_HEALTH_PORT || 
 const storageTimeoutMs = Number(process.env.STORAGE_TIMEOUT_MS || 120_000);
 const transcriptionTimeoutMs = Number(process.env.TRANSCRIPTION_TIMEOUT_MS || 300_000);
 const analysisTimeoutMs = Number(process.env.ANALYSIS_TIMEOUT_MS || 300_000);
+const monitorIntervalMs = Number(process.env.WORKER_MONITOR_INTERVAL_MS || 60_000);
+const alertWebhookUrl = process.env.WORKER_ALERT_WEBHOOK_URL?.trim();
+const monitorThresholds = queueMonitorThresholds(process.env);
+if (!Number.isSafeInteger(monitorIntervalMs) || monitorIntervalMs < 10_000) {
+  throw new Error('WORKER_MONITOR_INTERVAL_MS must be an integer of at least 10000');
+}
+if (alertWebhookUrl && new URL(alertWebhookUrl).protocol !== 'https:') {
+  throw new Error('WORKER_ALERT_WEBHOOK_URL must use HTTPS');
+}
 
 /** `fetch` with a deadline, reported as a job error code rather than a hang. */
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number, label: string) {
@@ -377,6 +392,97 @@ async function failJob(job: Job, error: unknown) {
   console.error('report_job_failed', { traceId: job.trace_id, code, attempts });
 }
 
+let queueMonitor: QueueMonitorSnapshot | null = null;
+let nextMonitorAt = 0;
+let lastAlertAt = 0;
+let consecutiveMonitorFailures = 0;
+let consecutiveAlertDeliveryFailures = 0;
+
+async function deliverQueueAlert(decision: 'firing' | 'resolved', snapshot: QueueMonitorSnapshot) {
+  const payload = {
+    event: 'thirtynights_report_worker_queue',
+    status: decision,
+    service: 'thirtynights-report-worker',
+    thresholds: monitorThresholds,
+    queue: snapshot,
+  };
+  if (!alertWebhookUrl) {
+    console.error('worker_alert_webhook_unconfigured', payload);
+    return;
+  }
+  const response = await fetchWithTimeout(alertWebhookUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 15_000, 'alert_webhook');
+  if (!response.ok) throw new Error(`alert_webhook_${response.status}`);
+}
+
+async function monitorReportQueue() {
+  const checkedAt = new Date();
+  const result = await pool.query<{
+    stale_job_count: number;
+    repeated_failure_job_count: number;
+    oldest_stale_job_at: string | null;
+  }>(`
+    select
+      count(*) filter (
+        where (
+          status in ('queued','retry')
+          and next_attempt_at < now() - ($1::integer * interval '1 minute')
+        ) or (
+          status = 'leased'
+          and lease_until < now() - ($1::integer * interval '1 minute')
+        )
+      )::integer as stale_job_count,
+      count(*) filter (
+        where status = 'failed'
+          or (
+            status = 'retry'
+            and attempts >= $2
+            and updated_at >= now() - ($3::integer * interval '1 minute')
+          )
+      )::integer as repeated_failure_job_count,
+      min(coalesce(lease_until, next_attempt_at)) filter (
+        where (
+          status in ('queued','retry')
+          and next_attempt_at < now() - ($1::integer * interval '1 minute')
+        ) or (
+          status = 'leased'
+          and lease_until < now() - ($1::integer * interval '1 minute')
+        )
+      )::text as oldest_stale_job_at
+    from private.report_jobs`, [
+      monitorThresholds.staleJobMinutes,
+      monitorThresholds.repeatedFailureAttempts,
+      monitorThresholds.failureWindowMinutes,
+    ]);
+  const snapshot = queueMonitorSnapshot(result.rows[0]!, checkedAt);
+  const previousStatus = queueMonitor?.status ?? 'unknown';
+  const decision = queueAlertDecision(
+    previousStatus,
+    snapshot,
+    lastAlertAt,
+    checkedAt.getTime(),
+    monitorThresholds.alertCooldownMinutes,
+  );
+  queueMonitor = snapshot;
+  consecutiveMonitorFailures = 0;
+  if (decision === 'none') return;
+  lastAlertAt = checkedAt.getTime();
+  try {
+    await deliverQueueAlert(decision, snapshot);
+    consecutiveAlertDeliveryFailures = 0;
+  } catch (error) {
+    consecutiveAlertDeliveryFailures += 1;
+    console.error('worker_alert_delivery_failed', {
+      message: error instanceof Error ? error.message : 'unknown',
+      consecutiveAlertDeliveryFailures,
+      queue: snapshot,
+    });
+  }
+}
+
 let stopping = false;
 let lastLoopAt = Date.now();
 let consecutiveLoopFailures = 0;
@@ -399,19 +505,39 @@ const health = createServer((request, response) => {
   }
   // The longest a healthy loop can legitimately go quiet is one whole job.
   const stalledFor = Date.now() - lastLoopAt;
-  const healthy = !stopping && stalledFor < Math.max(pollMs * 6, analysisTimeoutMs + transcriptionTimeoutMs) && consecutiveLoopFailures < 5;
+  const healthy = !stopping
+    && stalledFor < Math.max(pollMs * 6, analysisTimeoutMs + transcriptionTimeoutMs)
+    && consecutiveLoopFailures < 5
+    && consecutiveMonitorFailures < 5;
   response.writeHead(healthy ? 200 : 503, { 'content-type': 'application/json' });
   response.end(JSON.stringify({
     status: healthy ? 'ok' : stopping ? 'draining' : 'degraded',
     stalledForMs: stalledFor,
     consecutiveLoopFailures,
+    queueMonitor: queueMonitor ?? { status: 'pending' },
+    consecutiveMonitorFailures,
+    consecutiveAlertDeliveryFailures,
+    alertWebhookConfigured: Boolean(alertWebhookUrl),
   }));
 });
 health.listen(healthPort, () => console.log('worker_health_listening', { port: healthPort }));
+if (!alertWebhookUrl) console.warn('worker_alert_webhook_unconfigured');
 
 while (!stopping) {
   lastLoopAt = Date.now();
   try {
+    if (Date.now() >= nextMonitorAt) {
+      nextMonitorAt = Date.now() + monitorIntervalMs;
+      try {
+        await monitorReportQueue();
+      } catch (error) {
+        consecutiveMonitorFailures += 1;
+        console.error('worker_queue_monitor_failed', {
+          message: error instanceof Error ? error.message : 'unknown',
+          consecutiveMonitorFailures,
+        });
+      }
+    }
     const job = await leaseJob();
     if (!job) await new Promise((resolve) => setTimeout(resolve, pollMs));
     else await processJob(job).catch((error) => failJob(job, error));

@@ -15,7 +15,13 @@ import { questionFor } from '@/data/questions';
 import { reflectionReadiness, reflectionSetupIncomplete, shouldShowBackupReminder, shouldShowFirstReflectionSetup } from '@/domain/conversion';
 import { formatDuration } from '@/domain/format';
 import { isRecorded } from '@/domain/stats';
-import { retryReport, signedRecordingUrl, signedReportAudioUrl } from '@/lib/supabase';
+import {
+  getPasswordRecoveryState,
+  retryReport,
+  signedRecordingUrl,
+  signedReportAudioUrl,
+  subscribeToPasswordRecovery,
+} from '@/lib/supabase';
 import { exportEverything } from '@/services/exportData';
 import { isPurchaseIntentResumable } from '@/services/commerce';
 import { cancelNightlyQuestions, requestNotificationPermission, scheduleNightlyQuestions, subscribeToNotificationResponses } from '@/services/notifications';
@@ -97,6 +103,21 @@ function ThirtyNightsApp() {
       ? 'onboarding'
       : shouldShowFirstReflectionSetup(snapshot) ? 'report-setup' : 'home');
   }, [ready, setPurchaseIntent, snapshot]);
+
+  useEffect(() => {
+    let active = true;
+    const openRecovery = (state: Awaited<ReturnType<typeof getPasswordRecoveryState>>, error?: Error) => {
+      if (!active || (!error && state?.step !== 'set-password')) return;
+      setReturnAfterAuth('home');
+      setRoute('auth');
+    };
+    const unsubscribe = subscribeToPasswordRecovery(openRecovery);
+    if (ready) void getPasswordRecoveryState().then((state) => openRecovery(state)).catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || !snapshot.onboarded || snapshot.demoMode || !readiness.recordedCount) return;

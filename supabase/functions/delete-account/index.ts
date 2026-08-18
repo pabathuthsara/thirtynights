@@ -2,6 +2,20 @@ import { createClient } from 'npm:@supabase/supabase-js@2.111.0';
 
 import { revokeRefreshToken } from '../_shared/apple.ts';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+function textResponse(body: string, status: number) {
+  return new Response(body, { status, headers: corsHeaders });
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return Response.json(body, { status, headers: corsHeaders });
+}
+
 async function objectPaths(client: ReturnType<typeof createClient>, bucket: string, userId: string) {
   const paths: string[] = [];
   const { data: roots, error: rootError } = await client.storage.from(bucket).list(userId, { limit: 1000 });
@@ -18,17 +32,18 @@ async function objectPaths(client: ReturnType<typeof createClient>, bucket: stri
 }
 
 Deno.serve(async (request) => {
-  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (request.method !== 'POST') return textResponse('Method not allowed', 405);
   const authorization = request.headers.get('authorization');
-  if (!authorization) return new Response('Unauthorized', { status: 401 });
+  if (!authorization) return textResponse('Unauthorized', 401);
   const body = await request.json().catch(() => null) as { confirm?: string } | null;
-  if (body?.confirm !== 'DELETE') return new Response('Confirmation required', { status: 400 });
+  if (body?.confirm !== 'DELETE') return textResponse('Confirmation required', 400);
 
   const userClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
     global: { headers: { Authorization: authorization } }, auth: { persistSession: false },
   });
   const { data: userData, error: userError } = await userClient.auth.getUser();
-  if (userError || !userData.user) return new Response('Authenticated account required', { status: 401 });
+  if (userError || !userData.user) return textResponse('Authenticated account required', 401);
 
   const service = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -37,7 +52,7 @@ Deno.serve(async (request) => {
   const userHashBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
   const userHash = [...new Uint8Array(userHashBytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   const { data: deletion, error: deletionError } = await service.from('deletion_requests').insert({ user_id: userId, user_hash: userHash, status: 'processing' }).select('id').single();
-  if (deletionError) return Response.json({ error: 'deletion_audit_failed' }, { status: 500 });
+  if (deletionError) return jsonResponse({ error: 'deletion_audit_failed' }, 500);
 
   // RevenueCat can retain an app-user record even when no store transaction
   // completed. Do not partially delete the account (or revoke its Apple token)
@@ -50,7 +65,7 @@ Deno.serve(async (request) => {
       .update({ status: 'failed', error_code: 'revenuecat_delete_not_configured' })
       .eq('id', deletion.id);
     console.error('account_deletion_blocked', 'revenuecat_delete_not_configured');
-    return Response.json({ error: 'revenuecat_delete_not_configured' }, { status: 503 });
+    return jsonResponse({ error: 'revenuecat_delete_not_configured' }, 503);
   }
 
   try {
@@ -76,10 +91,10 @@ Deno.serve(async (request) => {
     const { error } = await service.auth.admin.deleteUser(userId, false);
     if (error) throw error;
     await service.from('deletion_requests').update({ status: 'complete', completed_at: new Date().toISOString() }).eq('id', deletion.id);
-    return Response.json({ deleted: true });
+    return jsonResponse({ deleted: true });
   } catch (error) {
     await service.from('deletion_requests').update({ status: 'failed', error_code: 'delete_failed' }).eq('id', deletion.id);
     console.error('account_deletion_failed', error instanceof Error ? error.message : 'unknown');
-    return Response.json({ error: 'delete_failed' }, { status: 500 });
+    return jsonResponse({ error: 'delete_failed' }, 500);
   }
 });

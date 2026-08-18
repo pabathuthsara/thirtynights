@@ -2,25 +2,23 @@ import 'react-native-url-polyfill/auto';
 
 import { Linking } from 'react-native';
 import { makeRedirectUri } from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
-import * as AppleAuthentication from 'expo-apple-authentication';
-import * as Crypto from 'expo-crypto';
 import { createClient, type User } from '@supabase/supabase-js';
 
 import { appIdentifiers } from '@/config/environment';
 import { accessTierFromServer, targetForAccessTier } from '@/domain/entitlement';
 import {
-  EMAIL_UPGRADE_STORAGE_KEY,
-  emailUpgradeRedirectUri,
-  emailUpgradeState as resolveEmailUpgradeState,
-  isEmailUpgradeCallback,
   isExpectedAuthCallback,
-  normalizeUpgradeEmail,
-  type EmailUpgradeState,
-  type PendingEmailUpgrade,
-} from '@/lib/emailUpgrade';
+  isPasswordRecoveryCallback,
+  normalizeRecoveryEmail,
+  PASSWORD_RECOVERY_STORAGE_KEY,
+  passwordRecoveryRedirectUri,
+  passwordRecoveryUserMatches,
+  type PasswordRecoveryStep,
+  type PendingPasswordRecovery,
+} from '@/lib/passwordRecovery';
 import { mergeHydratedNight } from '@/domain/syncMerge';
 import { secureStorage } from '@/lib/secureStorage';
+import { processingConsentError } from '@/lib/supabaseErrors';
 import type { AccessTier, AppSnapshot, Chapter, Night, Report, ReportSection } from '@/types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -44,40 +42,54 @@ export const supabase = isSupabaseConfigured
   : null;
 
 export const authRedirectUri = makeRedirectUri({ scheme: appIdentifiers.scheme, path: 'auth/callback' });
-const anonymousEmailRedirectUri = emailUpgradeRedirectUri(authRedirectUri);
+const passwordResetRedirectUri = passwordRecoveryRedirectUri(authRedirectUri);
+const LEGACY_EMAIL_UPGRADE_STORAGE_KEY = 'email-upgrade.v1';
 
-type EmailUpgradeListener = (state: EmailUpgradeState | null, error?: Error) => void;
-const emailUpgradeListeners = new Set<EmailUpgradeListener>();
+export type PasswordRecoveryState = { email: string; step: PasswordRecoveryStep };
+type PasswordRecoveryListener = (state: PasswordRecoveryState | null, error?: Error) => void;
+const passwordRecoveryListeners = new Set<PasswordRecoveryListener>();
 
-function publishEmailUpgrade(state: EmailUpgradeState | null, error?: Error) {
-  for (const listener of emailUpgradeListeners) listener(state, error);
+function publishPasswordRecovery(state: PasswordRecoveryState | null, error?: Error) {
+  for (const listener of passwordRecoveryListeners) listener(state, error);
 }
 
-async function readPendingEmailUpgrade(): Promise<PendingEmailUpgrade | null> {
-  const stored = await secureStorage.getItem(EMAIL_UPGRADE_STORAGE_KEY);
+async function clearLegacyEmailUpgrade() {
+  await secureStorage.removeItem(LEGACY_EMAIL_UPGRADE_STORAGE_KEY);
+}
+
+async function readPendingPasswordRecovery(): Promise<PendingPasswordRecovery | null> {
+  const stored = await secureStorage.getItem(PASSWORD_RECOVERY_STORAGE_KEY);
   if (!stored) return null;
   try {
-    const candidate = JSON.parse(stored) as Partial<PendingEmailUpgrade>;
+    const candidate = JSON.parse(stored) as Partial<PendingPasswordRecovery>;
+    const requestedAt = typeof candidate.requestedAt === 'string' ? Date.parse(candidate.requestedAt) : NaN;
     if (
       candidate.version !== 1
-      || typeof candidate.userId !== 'string'
       || typeof candidate.email !== 'string'
-      || typeof candidate.requestedAt !== 'string'
-      || normalizeUpgradeEmail(candidate.email) !== candidate.email
-    ) throw new Error('Invalid pending email upgrade.');
-    return candidate as PendingEmailUpgrade;
+      || normalizeRecoveryEmail(candidate.email) !== candidate.email
+      || (candidate.step !== 'email-sent' && candidate.step !== 'set-password')
+      || !Number.isFinite(requestedAt)
+      || requestedAt > Date.now() + 5 * 60_000
+      || Date.now() - requestedAt > 24 * 60 * 60_000
+    ) throw new Error('Invalid pending password recovery.');
+    return candidate as PendingPasswordRecovery;
   } catch {
-    await secureStorage.removeItem(EMAIL_UPGRADE_STORAGE_KEY);
+    await clearPendingPasswordRecovery();
     return null;
   }
 }
 
-async function writePendingEmailUpgrade(pending: PendingEmailUpgrade) {
-  await secureStorage.setItem(EMAIL_UPGRADE_STORAGE_KEY, JSON.stringify(pending));
+async function writePendingPasswordRecovery(pending: PendingPasswordRecovery) {
+  await secureStorage.setItem(PASSWORD_RECOVERY_STORAGE_KEY, JSON.stringify(pending));
 }
 
-async function clearPendingEmailUpgrade() {
-  await secureStorage.removeItem(EMAIL_UPGRADE_STORAGE_KEY);
+async function clearPendingPasswordRecovery() {
+  await secureStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY);
+}
+
+async function pendingPasswordRecoveryForUser(user: User) {
+  const pending = await readPendingPasswordRecovery();
+  return pending && passwordRecoveryUserMatches(pending, user) ? pending : null;
 }
 
 /** `signOut()` reports failures in its return value. Verify the local cache as
@@ -95,28 +107,12 @@ async function clearLocalSessionVerified() {
   // local token. A verified empty cache is the safety condition we need.
 }
 
-async function pendingStateForUser(user: {
-  id: string;
-  email?: string;
-  email_confirmed_at?: string;
-  is_anonymous?: boolean;
-}) {
-  const pending = await readPendingEmailUpgrade();
-  if (!pending) return null;
-  return resolveEmailUpgradeState(pending, user);
-}
-
 async function sessionHasAnonymousClaim(accessToken: string) {
   if (!supabase) return false;
   const { data, error } = await supabase.auth.getClaims(accessToken);
   if (error) throw error;
   return data?.claims?.is_anonymous === true;
 }
-
-// On web the provider returns into a popup that has to hand its result back to
-// the opener and close itself. Without this the browser preview hangs on a
-// blank tab after a successful Google sign-in. No-op on native.
-WebBrowser.maybeCompleteAuthSession();
 
 export async function ensureAnonymousSession() {
   if (!supabase) return { userId: null, state: 'local' as const };
@@ -129,14 +125,14 @@ export async function ensureAnonymousSession() {
     // before trusting the cached identity.
     const { data: verified, error: verificationError } = await supabase.auth.getUser();
     if (verified.user) {
-      // A confirmed email alone is not yet a recoverable password account.
-      // Keep the app fail-closed until the second step sets a password. This
-      // also keeps a resumable checkout on AuthScreen after a cold-start link.
-      const pendingUpgrade = await pendingStateForUser(verified.user);
-      if (pendingUpgrade) {
+      // A password-recovery link creates a valid session before the user has
+      // chosen the replacement password. Keep application state and syncing
+      // fail-closed until that final step succeeds.
+      const pendingRecovery = await pendingPasswordRecoveryForUser(verified.user);
+      if (pendingRecovery) {
         return {
           userId: verified.user.id,
-          email: pendingUpgrade.email,
+          email: pendingRecovery.email,
           state: 'anonymous' as const,
         };
       }
@@ -162,7 +158,7 @@ export async function ensureAnonymousSession() {
     const status = (verificationError as { status?: number } | null)?.status;
     if (verificationError && status !== 401 && status !== 403) throw verificationError;
     await clearLocalSessionVerified();
-    await clearPendingEmailUpgrade();
+    await clearLegacyEmailUpgrade();
   }
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error) throw error;
@@ -174,132 +170,46 @@ export async function ensureAnonymousSession() {
   };
 }
 
-/**
- * Begins the first half of an anonymous-to-password upgrade. Only the email,
- * UUID, and request time are retained; the password does not exist yet and is
- * never written to device storage.
- */
-export async function beginAnonymousEmailUpgrade(email: string): Promise<EmailUpgradeState> {
+/** Converts the device's anonymous owner into an email/password account in one
+ * request. Supabase email confirmation must remain disabled so the same UUID
+ * becomes permanent immediately without an email-link round trip. */
+export async function linkEmailPassword(email: string, password: string) {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
   await ensureAnonymousSession();
+  await clearLegacyEmailUpgrade();
   const { data: beforeData, error: beforeError } = await supabase.auth.getUser();
   if (beforeError) throw beforeError;
   const before = beforeData.user;
   if (!before) throw new Error('The local cloud identity could not be restored.');
-  const normalizedEmail = normalizeUpgradeEmail(email);
-  const existing = await readPendingEmailUpgrade();
-
-  // A confirmation link can finish while the app is suspended. Re-entering
-  // this screen must resume at the password step rather than changing owner.
-  if (!before.is_anonymous) {
-    const recovered = existing && resolveEmailUpgradeState(existing, before);
-    if (recovered?.step === 'set-password' && recovered.email === normalizedEmail) return recovered;
-    throw new Error('This device is already linked to a different account.');
-  }
-
-  const pending: PendingEmailUpgrade = {
-    version: 1,
-    userId: before.id,
-    email: normalizedEmail,
-    requestedAt: new Date().toISOString(),
-  };
-  // Store only non-secret recovery metadata before the request. If the network
-  // loses the response after Supabase accepts it, the same flow can still be
-  // resumed safely from its email link.
-  await writePendingEmailUpgrade(pending);
-  const { data, error } = await supabase.auth.updateUser(
-    { email: normalizedEmail },
-    { emailRedirectTo: anonymousEmailRedirectUri },
-  );
-  if (error) {
-    // Remove a definitely rejected request, but retain the marker if the
-    // follow-up check itself cannot establish whether the server accepted it.
-    try {
-      const { data: currentData, error: currentError } = await supabase.auth.getUser();
-      if (currentError) throw currentError;
-      const current = currentData.user;
-      const serverEmail = normalizeUpgradeEmail(current?.new_email ?? current?.email ?? '');
-      if (serverEmail !== normalizedEmail) await clearPendingEmailUpgrade();
-    } catch { /* An indeterminate network result remains resumable. */ }
-    throw error;
-  }
+  if (!before.is_anonymous) throw new Error('This device is already linked to an account.');
+  const normalizedEmail = normalizeRecoveryEmail(email);
+  const { data, error } = await supabase.auth.updateUser({ email: normalizedEmail, password });
+  if (error) throw error;
   if (!data.user || data.user.id !== before.id) {
     throw new Error('Account identity changed unexpectedly. Contact support before continuing.');
   }
-
-  const state = resolveEmailUpgradeState(pending, data.user);
-  if (!state) throw new Error('Account identity changed unexpectedly. Contact support before continuing.');
-  publishEmailUpgrade(state);
-  return state;
-}
-
-export async function getAnonymousEmailUpgradeState(): Promise<EmailUpgradeState | null> {
-  if (!supabase) return null;
-  const pending = await readPendingEmailUpgrade();
-  if (!pending) return null;
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-  if (!data.user) return null;
-  const state = resolveEmailUpgradeState(pending, data.user);
-  if (!state) {
-    await clearPendingEmailUpgrade();
-    return null;
+  if (
+    data.user.is_anonymous
+    || !data.user.email_confirmed_at
+    || normalizeRecoveryEmail(data.user.email ?? '') !== normalizedEmail
+  ) {
+    throw new Error('Immediate email/password accounts are not enabled in Supabase. Disable email confirmation and try again.');
   }
-  return state;
-}
-
-export async function resendAnonymousEmailUpgrade(): Promise<EmailUpgradeState> {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  const state = await getAnonymousEmailUpgradeState();
-  if (!state) throw new Error('Start the email-linking step again.');
-  if (state.step === 'set-password') return state;
-  const { error } = await supabase.auth.resend({
-    type: 'email_change',
-    email: state.email,
-    options: { emailRedirectTo: anonymousEmailRedirectUri },
-  });
-  if (error) throw error;
-  return state;
-}
-
-/** Completes the second half only after Supabase verifies the same UUID/email. */
-export async function completeAnonymousEmailUpgrade(password: string) {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  const pending = await readPendingEmailUpgrade();
-  if (!pending) throw new Error('Verify your email before setting a password.');
-  const { data: beforeData, error: beforeError } = await supabase.auth.getUser();
-  if (beforeError) throw beforeError;
-  const before = beforeData.user;
-  if (!before) throw new Error('The cloud identity could not be restored.');
-  const state = resolveEmailUpgradeState(pending, before);
-  if (state?.step !== 'set-password') throw new Error('Verify your email before setting a password.');
-
-  const { data, error } = await supabase.auth.updateUser({ password });
-  if (error) throw error;
-  if (!data.user || data.user.id !== pending.userId) {
-    throw new Error('Account identity changed unexpectedly. Contact support before continuing.');
-  }
-  // RLS reads account state from access-token claims. Refresh only after both
-  // factors are complete so Storage cannot treat a half-upgraded account as a
-  // permanent upload identity in application code.
+  // RLS reads identity state from access-token claims. Refresh after the
+  // anonymous-to-permanent conversion before Storage evaluates its policies.
   const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
   if (refreshError) throw refreshError;
   const user = refreshed.session?.user;
   if (
     !user
-    || user.id !== pending.userId
+    || user.id !== before.id
     || user.is_anonymous
-    || normalizeUpgradeEmail(user.email ?? '') !== pending.email
+    || normalizeRecoveryEmail(user.email ?? '') !== normalizedEmail
   ) {
     throw new Error('The permanent account session could not be refreshed.');
   }
-  await clearPendingEmailUpgrade();
+  await clearPendingPasswordRecovery();
   return user;
-}
-
-export function subscribeToEmailUpgrade(listener: EmailUpgradeListener) {
-  emailUpgradeListeners.add(listener);
-  return () => emailUpgradeListeners.delete(listener);
 }
 
 export async function permanentUploadIdentity() {
@@ -307,7 +217,7 @@ export async function permanentUploadIdentity() {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
   if (!userData.user || userData.user.is_anonymous) return null;
-  if (await pendingStateForUser(userData.user)) return null;
+  if (await pendingPasswordRecoveryForUser(userData.user)) return null;
 
   let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw sessionError;
@@ -326,68 +236,139 @@ export async function signInWithEmail(email: string, password: string) {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
-  if (data.user) await clearPendingEmailUpgrade();
+  if (data.user) {
+    await clearLegacyEmailUpgrade();
+    await clearPendingPasswordRecovery();
+  }
   return data.user;
 }
 
-export async function sendPasswordReset(email: string) {
+export async function sendPasswordReset(email: string): Promise<PasswordRecoveryState> {
   if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirectUri });
+  const pending: PendingPasswordRecovery = {
+    version: 1,
+    email: normalizeRecoveryEmail(email),
+    requestedAt: new Date().toISOString(),
+    step: 'email-sent',
+  };
+  // Store only the normalized email and recovery phase. The PKCE verifier is
+  // managed separately by Supabase in the same device-bound secure storage.
+  await writePendingPasswordRecovery(pending);
+  const { error } = await supabase.auth.resetPasswordForEmail(pending.email, {
+    redirectTo: passwordResetRedirectUri,
+  });
+  if (error) {
+    await clearPendingPasswordRecovery();
+    throw error;
+  }
+  const state = { email: pending.email, step: pending.step };
+  publishPasswordRecovery(state);
+  return state;
+}
+
+export async function getPasswordRecoveryState(): Promise<PasswordRecoveryState | null> {
+  if (!supabase) return null;
+  const pending = await readPendingPasswordRecovery();
+  if (!pending) return null;
+  if (pending.step === 'email-sent') return { email: pending.email, step: pending.step };
+  const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
+  if (!data.user || !passwordRecoveryUserMatches(pending, data.user)) {
+    await clearPendingPasswordRecovery();
+    return null;
+  }
+  return { email: pending.email, step: pending.step };
+}
+
+export function subscribeToPasswordRecovery(listener: PasswordRecoveryListener) {
+  passwordRecoveryListeners.add(listener);
+  return () => passwordRecoveryListeners.delete(listener);
+}
+
+export async function cancelPasswordRecovery() {
+  const pending = await readPendingPasswordRecovery();
+  if (pending?.step === 'set-password') await clearLocalSessionVerified();
+  await clearPendingPasswordRecovery();
+  publishPasswordRecovery(null);
+}
+
+export async function completePasswordRecovery(password: string) {
+  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
+  const pending = await readPendingPasswordRecovery();
+  if (!pending || pending.step !== 'set-password') {
+    throw new Error('Open the newest password-reset link before choosing a new password.');
+  }
+  const { data: beforeData, error: beforeError } = await supabase.auth.getUser();
+  if (beforeError) throw beforeError;
+  if (!beforeData.user || !passwordRecoveryUserMatches(pending, beforeData.user)) {
+    await clearPendingPasswordRecovery();
+    throw new Error('The password-reset session does not match this request. Start again.');
+  }
+  const { data, error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+  if (!data.user || normalizeRecoveryEmail(data.user.email ?? '') !== pending.email) {
+    throw new Error('The recovered account changed unexpectedly. Contact support before continuing.');
+  }
+  const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+  if (refreshError) throw refreshError;
+  if (!refreshed.session?.user || normalizeRecoveryEmail(refreshed.session.user.email ?? '') !== pending.email) {
+    throw new Error('The recovered account session could not be refreshed.');
+  }
+  await clearPendingPasswordRecovery();
+  publishPasswordRecovery(null);
+  return refreshed.session.user;
 }
 
 async function exchangeAuthCallback(url: string): Promise<User | null> {
   if (!supabase) return null;
   const parsed = new URL(url);
   if (!isExpectedAuthCallback(parsed, authRedirectUri)) return null;
+  const passwordRecoveryCallback = isPasswordRecoveryCallback(parsed);
+  const pendingRecoveryRequest = passwordRecoveryCallback ? await readPendingPasswordRecovery() : null;
+  if (passwordRecoveryCallback && !pendingRecoveryRequest) {
+    throw new Error('This password-reset request is no longer active. Start again.');
+  }
   const callbackError = parsed.searchParams.get('error_description') ?? parsed.searchParams.get('error');
   if (callbackError) throw new Error(callbackError.replace(/\+/g, ' '));
   const code = parsed.searchParams.get('code');
   if (!code) return null;
   const flowId = parsed.searchParams.get('sb_flow_id');
+  let recoveryEvent = false;
+  const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') recoveryEvent = true;
+  });
   const { data, error } = await supabase.auth.exchangeCodeForSession(
     code,
     flowId ? { flowId } : undefined,
-  );
+  ).finally(() => authListener.subscription.unsubscribe());
   if (error) throw error;
   const user = data.session?.user ?? null;
   if (!user) return null;
-  if (!isEmailUpgradeCallback(parsed)) {
-    const pending = await readPendingEmailUpgrade();
-    if (pending && pending.userId !== user.id) await clearPendingEmailUpgrade();
-    return user;
-  }
-
-  let pending = await readPendingEmailUpgrade();
-  if (!pending) {
-    const verifiedEmail = normalizeUpgradeEmail(user.email ?? '');
-    if (!verifiedEmail || !user.email_confirmed_at || user.is_anonymous) {
-      throw new Error('The email confirmation could not be matched to this device. Start again from account setup.');
+  if (recoveryEvent) {
+    const pending = pendingRecoveryRequest;
+    if (!passwordRecoveryCallback || !pending || normalizeRecoveryEmail(user.email ?? '') !== pending.email) {
+      await clearLocalSessionVerified();
+      await clearPendingPasswordRecovery();
+      throw new Error('The password-reset link does not match the request from this device. Start again.');
     }
-    pending = {
-      version: 1,
-      userId: user.id,
-      email: verifiedEmail,
-      requestedAt: new Date().toISOString(),
-    };
+    const ready: PendingPasswordRecovery = { ...pending, step: 'set-password' };
+    if (!passwordRecoveryUserMatches(ready, user)) {
+      await clearLocalSessionVerified();
+      await clearPendingPasswordRecovery();
+      throw new Error('The password-reset link did not verify the expected account. Start again.');
+    }
+    await writePendingPasswordRecovery(ready);
+    publishPasswordRecovery({ email: ready.email, step: ready.step });
+    // Do not let AppContext adopt the authenticated recovery session until the
+    // replacement password has actually been set.
+    return null;
   }
-
-  const state = resolveEmailUpgradeState(pending, user);
-  if (!state) {
-    // The callback must never silently switch the UUID that owns the local
-    // recordings. The newly exchanged session is discarded on mismatch.
+  if (passwordRecoveryCallback) {
     await clearLocalSessionVerified();
-    await clearPendingEmailUpgrade();
-    throw new Error('Email verification returned a different account. No local recordings were moved.');
+    await clearPendingPasswordRecovery();
+    throw new Error('The link was not a valid password-recovery link. Request a new one.');
   }
-  await writePendingEmailUpgrade(pending);
-  if (state.step !== 'set-password') {
-    throw new Error('Supabase did not confirm the email. Request a new verification link and try again.');
-  }
-  publishEmailUpgrade(state);
-  // AppContext treats any returned user as fully recoverable. Suppress that
-  // transition until AuthScreen completes the password step.
-  return null;
+  return user;
 }
 
 const authCallbackPromises = new Map<string, Promise<User | null>>();
@@ -405,154 +386,21 @@ export function handleAuthCallback(url: string): Promise<User | null> {
   return callback;
 }
 
-/**
- * Raised when the provider itself has not been switched on in the Supabase
- * project, as opposed to the user cancelling or the network failing.
- *
- * Apple has `isAvailableAsync()` to lean on; Google has nothing equivalent, so
- * a project missing its Google credentials used to surface the raw string
- * "Unsupported provider: provider is not enabled" straight into the UI. That
- * reads as a broken app rather than an unfinished backend, and it is the single
- * most likely state for this project to be in before launch.
- */
-export class ProviderUnavailableError extends Error {
-  constructor(readonly provider: 'apple' | 'google') {
-    super(`The ${provider} provider is not enabled for this project.`);
-    this.name = 'ProviderUnavailableError';
-  }
-}
-
-/** Supabase reports a disabled provider as a validation failure on the message
- *  rather than with a dedicated code, so the message is what we can match on. */
-function assertProviderEnabled(provider: 'apple' | 'google', error: { message?: string; code?: string } | null) {
-  if (!error) return;
-  const message = (error.message ?? '').toLowerCase();
-  if (message.includes('provider is not enabled') || message.includes('unsupported provider')) {
-    throw new ProviderUnavailableError(provider);
-  }
-}
-
-export async function linkOAuthIdentity(provider: 'apple' | 'google') {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  const before = (await supabase.auth.getUser()).data.user;
-  if (!before) throw new Error('The anonymous identity could not be restored.');
-  const { data, error } = await supabase.auth.linkIdentity({ provider, options: { redirectTo: authRedirectUri, skipBrowserRedirect: true } });
-  assertProviderEnabled(provider, error);
-  if (error) throw error;
-  if (!data.url) throw new Error(`The ${provider} provider did not return an authorization URL.`);
-  const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUri);
-  if (result.type !== 'success') return null;
-  await handleAuthCallback(result.url);
-  const after = (await supabase.auth.getUser()).data.user;
-  if (!after || after.id !== before.id) throw new Error('Identity linking did not preserve the account. No data was moved.');
-  await clearPendingEmailUpgrade();
-  return after;
-}
-
-/**
- * Hand Apple's single-use authorization code to the backend, which trades it
- * for a refresh token and keeps it until the account is deleted.
- *
- * Apple requires that deleting an account also revokes its tokens, and the code
- * expires within minutes of sign-in — so this is the only moment it can be
- * captured. It is intentionally non-fatal: nobody should be blocked from
- * signing in because a server-to-server exchange failed. What it costs is that
- * the account has no token to revoke later, which the launch checklist tracks.
- */
-async function captureAppleAuthorizationCode(code: string | null) {
-  if (!supabase || !code) return;
-  try {
-    await supabase.functions.invoke('apple-identity', { body: { code } });
-  } catch {
-    // Swallowed by design — see above.
-  }
-}
-
-export async function linkNativeAppleIdentity() {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  if (!await AppleAuthentication.isAvailableAsync()) return linkOAuthIdentity('apple');
-  const before = (await supabase.auth.getUser()).data.user;
-  if (!before) throw new Error('The anonymous identity could not be restored.');
-  const rawNonce = Crypto.randomUUID();
-  const state = Crypto.randomUUID();
-  const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
-  try {
-    const credential = await AppleAuthentication.signInAsync({
-      requestedScopes: [AppleAuthentication.AppleAuthenticationScope.FULL_NAME, AppleAuthentication.AppleAuthenticationScope.EMAIL],
-      nonce,
-      state,
-    });
-    if (credential.state !== state || !credential.identityToken) throw new Error('Apple did not return a verifiable identity token.');
-    const { error } = await supabase.auth.linkIdentity({ provider: 'apple', token: credential.identityToken, nonce: rawNonce });
-    if (error) throw error;
-    await captureAppleAuthorizationCode(credential.authorizationCode);
-    const givenName = credential.fullName?.givenName;
-    const familyName = credential.fullName?.familyName;
-    if (givenName || familyName) {
-      await supabase.auth.updateUser({ data: { full_name: [givenName, familyName].filter(Boolean).join(' '), given_name: givenName, family_name: familyName } });
-    }
-    const after = (await supabase.auth.getUser()).data.user;
-    if (!after || after.id !== before.id) throw new Error('Apple linking did not preserve the account.');
-    await clearPendingEmailUpgrade();
-    return after;
-  } catch (error) {
-    if ((error as { code?: string }).code === 'ERR_REQUEST_CANCELED') return null;
-    throw error;
-  }
-}
-
-export async function signInNativeAppleIdentity() {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  if (!await AppleAuthentication.isAvailableAsync()) return signInWithOAuthProvider('apple');
-  const rawNonce = Crypto.randomUUID();
-  const state = Crypto.randomUUID();
-  const nonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
-  try {
-    const credential = await AppleAuthentication.signInAsync({
-      requestedScopes: [AppleAuthentication.AppleAuthenticationScope.FULL_NAME, AppleAuthentication.AppleAuthenticationScope.EMAIL], nonce, state,
-    });
-    if (credential.state !== state || !credential.identityToken) throw new Error('Apple did not return a verifiable identity token.');
-    const { data, error } = await supabase.auth.signInWithIdToken({ provider: 'apple', token: credential.identityToken, nonce: rawNonce });
-    if (error) throw error;
-    await captureAppleAuthorizationCode(credential.authorizationCode);
-    const givenName = credential.fullName?.givenName;
-    const familyName = credential.fullName?.familyName;
-    if (givenName || familyName) await supabase.auth.updateUser({ data: { full_name: [givenName, familyName].filter(Boolean).join(' '), given_name: givenName, family_name: familyName } });
-    if (data.user) await clearPendingEmailUpgrade();
-    return data.user;
-  } catch (error) {
-    if ((error as { code?: string }).code === 'ERR_REQUEST_CANCELED') return null;
-    throw error;
-  }
-}
-
-export async function signInWithOAuthProvider(provider: 'apple' | 'google') {
-  if (!supabase) throw new Error('Cloud accounts are not configured yet.');
-  const { data, error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: authRedirectUri, skipBrowserRedirect: true } });
-  assertProviderEnabled(provider, error);
-  if (error) throw error;
-  if (!data.url) throw new Error(`The ${provider} provider did not return an authorization URL.`);
-  const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUri);
-  if (result.type !== 'success') return null;
-  const user = await handleAuthCallback(result.url);
-  if (user) await clearPendingEmailUpgrade();
-  return user;
-}
-
 export function subscribeToAuthLinks(onUser: (userId: string, email?: string) => void) {
   let active = true;
   const receive = (url: string) => {
-    let emailUpgrade = false;
+    let passwordRecovery = false;
     try {
       const parsed = new URL(url);
       if (!isExpectedAuthCallback(parsed, authRedirectUri)) return;
-      emailUpgrade = isEmailUpgradeCallback(parsed);
+      passwordRecovery = isPasswordRecoveryCallback(parsed);
     } catch { return; }
     void handleAuthCallback(url)
       .then((user) => { if (active && user) onUser(user.id, user.email); })
       .catch((caught: unknown) => {
-        if (!active || !emailUpgrade) return;
-        publishEmailUpgrade(null, caught instanceof Error ? caught : new Error('Email verification could not be completed.'));
+        if (!active) return;
+        const error = caught instanceof Error ? caught : new Error('The account link could not be completed.');
+        if (passwordRecovery) publishPasswordRecovery(null, error);
       });
   };
   const listener = Linking.addEventListener('url', ({ url }) => receive(url));
@@ -783,7 +631,7 @@ export async function setRemoteProcessingConsent(version?: string) {
   const { data, error } = await supabase.rpc('set_processing_consent', {
     requested_version: version ?? null,
   });
-  if (error) throw error;
+  if (error) throw processingConsentError(error);
   return data as { processing_consent_version: string | null; active: boolean };
 }
 
@@ -867,7 +715,8 @@ export async function requestRemoteDeletion() {
   // best-effort local detach, then allow the requested device wipe to finish;
   // any cached token is invalid because its Auth owner no longer exists.
   await clearLocalSessionVerified().catch(() => undefined);
-  await clearPendingEmailUpgrade();
+  await clearLegacyEmailUpgrade();
+  await clearPendingPasswordRecovery();
 }
 
 export async function clearLocalCloudSession() {
@@ -876,5 +725,6 @@ export async function clearLocalCloudSession() {
   } catch {
     throw new Error('This device could not disconnect from the cloud account, so its recordings were left untouched. Check your connection and try again.');
   }
-  await clearPendingEmailUpgrade();
+  await clearLegacyEmailUpgrade();
+  await clearPendingPasswordRecovery();
 }

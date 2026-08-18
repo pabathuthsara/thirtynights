@@ -107,6 +107,8 @@ describe('privacy-safe analytics', () => {
     }
     expect(error).toBeInstanceOf(AnalyticsValidationError);
     expect((error as Error).message).not.toContain(privateValue);
+    expect(() => unsafeTrack('account_started', { method: 'google' })).toThrow(AnalyticsValidationError);
+    expect(() => unsafeTrack('account_started', { method: 'apple' })).toThrow(AnalyticsValidationError);
     expect(() => unsafeTrack('processing_permission_accepted', {
       disclosureVersion: 'provider-specific prose',
     })).toThrow(AnalyticsValidationError);
