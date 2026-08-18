@@ -15,11 +15,11 @@ This tracker complements the publication readiness audit. It records codebase wo
 | 5 | Add an index on `private.processing_consent_events(user_id)`. | Complete | Added and deployed migration `20260818093743`; verified the hosted B-tree index and added a pgTAP contract assertion. |
 | 6 | Strengthen CI release checks. | Complete | CI now generates and inspects a production Android native project, exports its Android bundle, runs the existing checks, tests/lint, and explicitly lists local migration history. |
 | 7 | Add automated coverage for immediate email/password signup and password recovery. | Complete | Added mocked Supabase lifecycle tests for immediate session creation, redirect-bound recovery, fail-closed transitions, and stable user identity. |
-| 8 | Add worker monitoring for stale jobs and repeated processing failures. | Code complete | Added queue monitoring, configurable thresholds/cooldown, health-state reporting, and HTTPS webhook firing/resolution events. A production webhook URL must still be supplied in the host secret manager. |
-| 9 | Review `SECURITY DEFINER` database functions and add authorization regression tests. | Complete | Verified fixed search paths and least-privilege grants; added pgTAP coverage for anonymous denial, owner execution, and cross-user isolation. |
+| 8 | Add worker monitoring for stale jobs and repeated processing failures. | Deployed; destination pending | Queue monitoring and its thresholds are live on Railway deployment `017021d9`; the queue is healthy. A production HTTPS alert webhook must still be supplied. |
+| 9 | Review `SECURITY DEFINER` database functions and add authorization regression tests. | Complete | All 23 authorization checks pass against hosted Supabase; the run found and fixed the `retry_report` conflict-target ambiguity in deployed migration `20260818113403`. |
 | 10 | Add hosted privacy, terms, support, and account-deletion pages and replace placeholder URLs. | Pending | Requires final public URLs and hosting. |
 | 11 | Produce the Google Play asset and listing package. | Pending | 512×512 icon, 1024×500 feature graphic, production screenshots, listing copy, and release notes. |
-| 12 | Clean and commit the working tree before creating a release candidate. | Pending | Preserve all current work and commit only after verification. |
+| 12 | Clean and commit the working tree before creating a release candidate. | Complete | Verified work was committed and pushed as `85426f3`; the working tree is clean. |
 
 ## Verification record
 
@@ -60,7 +60,7 @@ This tracker complements the publication readiness audit. It records codebase wo
 - Confirmed the hosted migration history contains version `20260818093743`.
 - Added a pgTAP `has_index` assertion to `production_contract.test.sql` and increased its plan from 42 to 43 assertions.
 - Local database reset/lint/pgTAP execution could not run on this workstation because Docker and Podman are not installed. The hosted schema was verified directly, and CI retains the full local Supabase reset, lint, and database test workflow.
-- Hosted advisors reported only the expected informational “unused index” notice for the newly created index. Existing security warnings remain part of item 9.
+- After the authorization migration, hosted security and performance advisors reported no warning- or error-level issues.
 
 ### CI and repository checks
 
@@ -92,8 +92,13 @@ This tracker complements the publication readiness audit. It records codebase wo
 - `WORKER_ALERT_WEBHOOK_URL` accepts an HTTPS production alert destination;
   `/healthz` exposes queue-monitor, webhook-configuration, and delivery state.
 - Thresholds, cadence, and the destination are documented in
-  `worker/.env.example` and the Railway handoff. The final webhook value remains
-  an owner/deployment action because no alert service was supplied.
+  `worker/.env.example` and the Railway handoff.
+- Commit `85426f3` is deployed to Railway production as deployment
+  `017021d9-cd01-44a3-9753-29ee0eb061a1`. The health check passed in Singapore
+  with one replica, and the hosted queue currently reports zero stale jobs and
+  zero repeated/final failures.
+- The runtime confirms `WORKER_ALERT_WEBHOOK_URL` is not configured. Supplying
+  that external destination remains required for human notification delivery.
 
 ### Database authorization review
 
@@ -102,8 +107,13 @@ This tracker complements the publication readiness audit. It records codebase wo
   privileged functions, no authenticated access to private/server-only
   helpers, owner-scoped scheduling/consent/reconciliation, and rejected
   cross-user report retries.
-- The new pgTAP file remains queued for CI because this workstation has neither
-  Docker nor Podman; it was not run against the hosted production database.
+- The hosted project does not keep pgTAP installed, so verification loaded it
+  only inside a rollback-only transaction. All 23 checks passed and no test
+  identities or extension objects persisted.
+- The first hosted run exposed an ambiguous `on conflict (report_id)` inside
+  `retry_report`. Migration `20260818113403` now targets the named unique
+  constraint, is recorded in hosted migration history, and passed the owner and
+  cross-user retry tests.
 
 ## Known release check still failing
 
