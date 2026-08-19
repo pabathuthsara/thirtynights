@@ -19,6 +19,9 @@ export type ReflectionReadiness = {
   unbackedCount: number;
   backedUpCount: number;
   checkpoint: 7 | 30 | 60 | 90;
+  /** True only when a reflection checkpoint has actually arrived. Backing up
+   *  an early night must not make Home claim a reflection is prepared. */
+  checkpointDue: boolean;
   report?: Report;
 };
 
@@ -52,6 +55,7 @@ export function reflectionReadiness(snapshot: AppSnapshot): ReflectionReadiness 
     unbackedCount: unbacked.length,
     backedUpCount: recorded.length - unbacked.length,
     checkpoint,
+    checkpointDue: snapshot.unresolvedCheckpoint !== undefined || Boolean(report),
     report,
   };
 }
@@ -72,9 +76,10 @@ export function reflectionSetupIncomplete(snapshot: AppSnapshot) {
 }
 
 export function shouldShowFirstReflectionSetup(snapshot: AppSnapshot) {
+  const readiness = reflectionReadiness(snapshot);
   return !snapshot.demoMode
     && !snapshot.reportSetupPromptShownAt
-    && reflectionReadiness(snapshot).recordedCount >= 1
+    && readiness.checkpointDue
     && reflectionSetupIncomplete(snapshot);
 }
 

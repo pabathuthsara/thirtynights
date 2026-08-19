@@ -260,7 +260,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
                       {evidence.quote ? <Text style={styles.quote}>{evidence.quote}</Text> : null}
                       <Text style={styles.night}>
                         Night {evidence.nightIndex} · {formatDuration(Math.floor(evidence.startMs / 1000))}
-                        {onResolveNightAudio ? (playingThis ? ' · playing' : ' · press the wax to hear it') : ''}
+                        {onResolveNightAudio ? (playingThis ? ' · playing' : ' · tap wax to listen') : ''}
                       </Text>
                       {evidenceError?.segmentId === evidence.segmentId ? (
                         <Text accessibilityRole="alert" style={styles.evidenceError}>{evidenceError.message}</Text>
@@ -276,7 +276,7 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
             <View style={styles.summary}>
               <LinearGradient colors={['rgba(255,255,255,0.6)', 'rgba(255,255,255,0)']} style={styles.cardSheen} pointerEvents="none" />
               <Text style={styles.eyebrow}>The arc</Text>
-              <Text style={styles.summaryTitle}>{report.summary || 'No single pattern needed to be invented.'}</Text>
+              <Text style={styles.summaryTitle}>{report.summary || 'No single pattern emerged.'}</Text>
             </View>
             <View style={styles.actions}>
               <Button variant="paper" icon={Share2} onPress={onShare}>Share reflection</Button>
@@ -288,9 +288,9 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
         <Stagger index={2}>
           <View style={styles.unavailableCard}>
             <Text style={styles.eyebrow}>This report needs attention</Text>
-            <Text style={styles.summaryTitle}>Your recordings remain sealed and safe.</Text>
+            <Text style={styles.summaryTitle}>Your recordings are safe.</Text>
             <Text style={styles.body}>
-              The report stopped rather than substituting sample conclusions. Reference: {report.traceId || 'available to support'}.
+              The report stopped without using sample conclusions. Reference: {report.traceId || 'available to support'}.
             </Text>
             {onRetry ? (
               <Button
@@ -312,8 +312,8 @@ export function ReportScreen({ chapter, report, onBack, onResolveAudio, onResolv
             <Text style={styles.summaryTitle}>Your chapter is sealed.</Text>
             <Text style={styles.body}>
               {report
-                ? 'The app will synchronize the real report when cloud processing finishes. No sample conclusions are shown.'
-                : 'A report can be queued once the required recordings are backed up and cloud-processing consent is confirmed.'}
+                ? 'Your report appears when processing finishes.'
+                : 'Back up the recordings and allow processing to begin.'}
             </Text>
             {onSetup ? <Button variant="paper" onPress={onSetup}>Set up my reflection</Button> : null}
             {onContinue && checkpoint === 7 ? <Button variant="outline" onPress={onContinue}>Unlock nights 8–30</Button> : null}

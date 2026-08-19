@@ -134,7 +134,7 @@ export function GalleryScreen({
       <Stagger index={2}>
         <View style={styles.currentCard}>
           <LinearGradient colors={gradients.cardSheen} style={styles.currentSheen} pointerEvents="none" />
-          <Text style={styles.currentEyebrow}>The chapter you are in</Text>
+          <Text style={styles.currentEyebrow}>Current chapter</Text>
           <Text style={styles.currentMonth}>{chapterTitle(current)}</Text>
           <View style={styles.currentBoard}>
             <WindowGrid
@@ -147,12 +147,12 @@ export function GalleryScreen({
           <View style={styles.currentStats}>
             <View style={styles.currentStat}>
               <Text style={styles.currentStatValue}>{recorded}</Text>
-              <Text style={styles.currentStatLabel}>of {journeyTotal}-night journey</Text>
+              <Text style={styles.currentStatLabel}>of {journeyTotal} nights</Text>
             </View>
             <View style={styles.currentDivider} />
             <View style={styles.currentStat}>
               <Text style={styles.currentStatValue}>{formatVoiceTime(totalVoiceSeconds(current.nights))}</Text>
-              <Text style={styles.currentStatLabel}>of your voice</Text>
+              <Text style={styles.currentStatLabel}>voice kept</Text>
             </View>
           </View>
         </View>
@@ -169,7 +169,7 @@ export function GalleryScreen({
                   <Pressable
                     key={`unresolved-${entry.checkpointNight}`}
                     accessibilityRole="button"
-                    accessibilityLabel={`Night ${entry.checkpointNight}, setup/progress needed`}
+                    accessibilityLabel={`Night ${entry.checkpointNight}, needs setup`}
                     accessibilityHint="Opens the reflection setup and progress screen"
                     onPress={() => onCheckpoint?.()}
                     style={({ pressed }) => [
@@ -181,7 +181,7 @@ export function GalleryScreen({
                     <View style={[styles.shelfDot, styles.shelfDotAttention]} />
                     <Text style={styles.shelfNight}>Night {entry.checkpointNight}</Text>
                     <Text style={[styles.shelfStatus, styles.shelfStatusAttention]}>
-                      setup/progress needed
+                      Needs setup
                     </Text>
                     <ChevronRight size={16} strokeWidth={2} color={colors.roseText} />
                   </Pressable>
@@ -234,7 +234,7 @@ export function GalleryScreen({
             <Image source={keepsakeDecorations.driedFlowers} resizeMode="contain" accessibilityElementsHidden style={styles.emptyArt} />
             <Text style={styles.emptyTitle}>Your first cover is still being made.</Text>
             <Text style={styles.emptyBody}>
-              When this chapter closes it settles here as a keepsake you can open again. No sample months are shown.
+              Completed chapters appear here. No samples.
             </Text>
           </View>
         )}
@@ -397,7 +397,7 @@ export function LightMapScreen({ chapters, onSettings }: {
           <View style={[styles.statsRow, stackStats && styles.statsColumn]}>
             <View style={styles.stat}>
               <Text style={styles.statNumber}>{formatVoiceTime(totalVoiceSeconds(nights))}</Text>
-              <Text style={styles.statLabel}>of your voice, kept</Text>
+              <Text style={styles.statLabel}>voice kept</Text>
             </View>
             <View style={[styles.statDivider, stackStats && styles.statDividerHorizontal]} />
             <View style={styles.stat}>
@@ -429,7 +429,7 @@ export function LightMapScreen({ chapters, onSettings }: {
       <Stagger index={3}>
         <View style={styles.yearHeader}>
           <Text accessibilityRole="header" style={styles.year}>{year}</Text>
-          <Text style={styles.yearHint}>Every night you kept, lit by the hour you spoke — the later, the deeper.</Text>
+          <Text style={styles.yearHint}>Each night is colored by the hour you spoke.</Text>
         </View>
 
         {recorded.length ? (
@@ -450,7 +450,7 @@ export function LightMapScreen({ chapters, onSettings }: {
             <Sparkle size={22} color={colors.brass} twinkle />
             <Text style={styles.emptyTitle}>Your first sealed night will light this map.</Text>
             <Text style={styles.emptyBody}>
-              Every recording places one warm mark on the year, tinted by the hour you spoke.
+              Each recording adds a mark colored by the hour.
             </Text>
           </View>
         )}
@@ -485,7 +485,7 @@ export function LightMapScreen({ chapters, onSettings }: {
         title={picked ? `Night ${picked.night.index}` : ''}
         body={picked
           ? `${formatLongDate(picked.date)}${picked.night.durationSec ? ` · ${formatDuration(picked.night.durationSec)}` : ''}. ${
-            picked.night.status === 'revealed' ? 'This one has been revealed — you can play it from the Gallery.' : 'Still sealed until its reflection checkpoint.'
+            picked.night.status === 'revealed' ? 'Playback is available in Gallery.' : 'Sealed until its reflection checkpoint.'
           }`
           : undefined}
         actions={[{ label: 'Close', variant: 'outline', onPress: () => setPicked(null) }]}

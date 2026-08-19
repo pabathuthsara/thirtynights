@@ -345,7 +345,7 @@ export function GeneratingScreen({ mini = false, steps, onDone, onSetup, onRetry
         {mini ? 'Seven nights, gathered.' : 'Your chapter is gathered.'}
       </Text>
       <Text style={styles.generatingBody}>
-        Your take is sealed on this device. A report is written only from recordings that are really backed up, and only with your processing consent.
+        Your take is safe here. Reflections use backed-up recordings only, with your permission.
       </Text>
 
       <View style={styles.steps}>
@@ -368,10 +368,10 @@ export function GeneratingScreen({ mini = false, steps, onDone, onSetup, onRetry
       </View>
 
       <View style={styles.generatingAction}>
-        <Button onPress={onSetup ?? onDone}>{onSetup ? 'Finish reflection setup' : 'Continue'}</Button>
+        <Button onPress={onSetup ?? onDone}>{onSetup ? 'Finish setup' : 'Continue'}</Button>
         {onRetry ? <Button variant="outline" onPress={onRetry}>Retry now</Button> : null}
-        {onSetup ? <Button variant="ghost" onPress={onDone}>Keep this night on my phone for now</Button> : null}
-        <Text style={styles.safeClose}>You can safely close the app. This checkpoint stays available from Home.</Text>
+        {onSetup ? <Button variant="ghost" onPress={onDone}>Keep it on this phone</Button> : null}
+        <Text style={styles.safeClose}>You can close the app. Return from Home.</Text>
       </View>
     </Screen>
   );

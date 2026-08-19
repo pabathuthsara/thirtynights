@@ -189,20 +189,20 @@ export function SettingsScreen(props: SettingsProps) {
             <Row
               icon={Clock3}
               title="Nightly reminder"
-              detail={`Your question arrives at ${formattedHour}`}
+              detail={`At ${formattedHour}`}
               onPress={props.onEditReminder}
             />
             <SwitchRow
               icon={BellRing}
               title="Notifications"
-              detail="One local question reminder a day"
+              detail="One reminder a day"
               value={props.notificationsEnabled}
               onValueChange={props.onToggleNotifications}
             />
             <SwitchRow
               icon={MoonStar}
               title="Thirty-minute nudge"
-              detail="A single gentle follow-up. Off by default."
+              detail="Optional follow-up"
               value={props.gentleNudge}
               onValueChange={props.onToggleNudge}
               last
@@ -213,8 +213,8 @@ export function SettingsScreen(props: SettingsProps) {
         <Stagger index={2}>
           <Text style={styles.sectionLabel}>APPEARANCE</Text>
           <View style={styles.group}>
-            <Row icon={Palette} title="Soft Keepsake" detail="Warm paper, blush, rose gold · Included" />
-            <Row icon={Flower2} title="Keepsake Classics" detail="The current sticker collection" last />
+            <Row icon={Palette} title="Soft Keepsake" detail="Paper, blush, rose gold" />
+            <Row icon={Flower2} title="Keepsake Classics" detail="Current sticker collection" last />
           </View>
         </Stagger>
 
@@ -224,7 +224,7 @@ export function SettingsScreen(props: SettingsProps) {
             <Row
               icon={UserRound}
               title={connected ? 'Account connected' : 'Create or connect an account'}
-              detail={connected ? props.email || 'Permanent cloud identity' : 'Required for purchase and raw-audio backup'}
+              detail={connected ? props.email || 'Cloud identity' : 'For purchases and backup'}
               onPress={connected ? () => setAccountSheet(true) : props.onAuth}
             />
             <Row
@@ -233,9 +233,9 @@ export function SettingsScreen(props: SettingsProps) {
               detail={props.demoMode
                 ? 'Developer preview · local only'
                 : !connected
-                ? 'Local to this device'
+                ? 'On this device'
                 : !props.processingConsent
-                  ? 'Cloud processing consent required'
+                  ? 'Processing permission needed'
                   : `${props.backupNetwork === 'wifi-only' ? 'Wi-Fi only' : 'Wi-Fi and cellular'} · ${props.unbackedCount} waiting`}
               onPress={props.demoMode ? undefined : () => connected ? setBackupSheet(true) : props.onAuth()}
             />
@@ -243,17 +243,17 @@ export function SettingsScreen(props: SettingsProps) {
               icon={RefreshCw}
               title={props.demoMode ? 'Cloud sync unavailable in preview' : props.syncing ? 'Synchronizing…' : 'Synchronize now'}
               detail={props.demoMode
-                ? 'Preview recordings stay only on this device'
+                ? 'Preview recordings stay here'
                 : props.unbackedCount
                 ? `${props.unbackedCount} recording${props.unbackedCount === 1 ? '' : 's'} not backed up`
-                : 'Metadata and reports are up to date locally'}
+                : 'Up to date'}
               busy={busy === 'sync'}
               onPress={props.demoMode ? undefined : () => void run('sync', props.onSync, 'Everything is synchronized.')}
             />
             <Row
               icon={ReceiptText}
               title="Restore purchases"
-              detail="Access opens after server verification"
+              detail="Verified with the store"
               onPress={props.onRestore}
               last
             />
@@ -266,7 +266,7 @@ export function SettingsScreen(props: SettingsProps) {
             <Row
               icon={Download}
               title="Export everything"
-              detail="Metadata, reports, and device-resident raw audio"
+              detail="Audio, reports, and dates"
               busy={busy === 'export'}
               onPress={() => void run('export', props.onExport, 'Your export is ready to share.')}
             />
@@ -276,13 +276,13 @@ export function SettingsScreen(props: SettingsProps) {
             <Row
               icon={Globe}
               title="Web deletion request"
-              detail="For access when this app cannot be opened"
+              detail="Use if the app is unavailable"
               onPress={props.onWebDelete}
             />
             <Row
               icon={Trash2}
               title="Delete everything"
-              detail={connected ? 'Cloud account and this device, or this device only' : 'Delete all data on this device'}
+              detail={connected ? 'Cloud and device' : 'This device'}
               danger
               last
               onPress={() => setDeleteSheet(true)}
@@ -296,7 +296,7 @@ export function SettingsScreen(props: SettingsProps) {
             <View accessibilityRole="alert" style={styles.previewNotice}>
               <Text style={styles.previewNoticeTitle}>{previewName} preview is active</Text>
               <Text style={styles.previewNoticeBody}>
-                This is local visual test data, not your cloud journey. Recording and backup are disabled. Export any preview take you need before returning.
+                Local test data only. Recording and backup are off. Export any take you need before returning.
               </Text>
             </View>
             <Button
@@ -327,9 +327,8 @@ export function SettingsScreen(props: SettingsProps) {
               <Button variant="outline" onPress={props.onDevRecordings}>All recordings · play any take</Button>
               <Button variant="outline" onPress={props.onAdvanceNight}>Advance one night</Button>
               <Text style={styles.devNote}>
-                Advancing pulls the whole schedule back a day, so the next night unlocks now.
-                Seal tonight first — an unrecorded night whose date has passed becomes missed,
-                exactly as it would overnight.
+                Advancing moves the schedule back one day. Seal tonight first;
+                an unrecorded past night becomes missed.
               </Text>
             </View>
           </Stagger>
@@ -340,7 +339,7 @@ export function SettingsScreen(props: SettingsProps) {
         <BottomSheet
           visible={exitPreviewSheet}
           title="Leave this developer preview?"
-          body={`This preview contains ${props.previewRecordingCount ?? 0} local ${props.previewRecordingCount === 1 ? 'recording' : 'recordings'} that cannot be attached to your real scheduled nights. Export first if you need a copy, or explicitly remove the preview ${props.previewRecordingCount === 1 ? 'take' : 'takes'} and return to your cloud journey.`}
+          body={`This preview has ${props.previewRecordingCount ?? 0} local ${props.previewRecordingCount === 1 ? 'recording' : 'recordings'} that cannot join your real nights. Export first, or remove the preview ${props.previewRecordingCount === 1 ? 'take' : 'takes'}.`}
           actions={[
             {
               label: 'Export preview first',
@@ -364,7 +363,7 @@ export function SettingsScreen(props: SettingsProps) {
         <BottomSheet
           visible={accountSheet}
           title="Your account"
-          body={`${props.email || 'A permanent cloud identity is linked to this device.'}\n\nThis identity owns your purchases and any backed-up recordings. Signing out is deliberately not offered — your recordings live on this device, and detaching them from their owner is the one thing that cannot be undone safely. To move on, export first and then delete.`}
+          body={`${props.email || 'A cloud identity is linked to this device.'}\n\nThis account owns your purchases and backups. To change accounts safely, export first and then delete.`}
           actions={[{ label: 'Understood', variant: 'outline', onPress: () => setAccountSheet(false) }]}
           onClose={() => setAccountSheet(false)}
         />
@@ -372,7 +371,7 @@ export function SettingsScreen(props: SettingsProps) {
         <BottomSheet
           visible={backupSheet}
           title="Private backup & reflection processing"
-          body="If you agree, raw voice recordings plus their night and date metadata are securely stored with Supabase. OpenAI transcribes the recordings and uses those transcripts to create your private reflections. Data is encrypted in transit and at rest, but is not end-to-end encrypted. Withdrawing stops future uploads and AI processing; already uploaded data remains in your private account until you use Delete everything. Review the Privacy Policy for the approved retention terms."
+          body="With permission, Supabase stores your recordings and dates. OpenAI transcribes them and creates reflections. Data is encrypted in transit and at rest, but not end-to-end. Withdraw to stop future processing; use Delete everything to remove stored data. Retention details are in the Privacy Policy."
           actions={[
             ...(!props.processingConsent
               ? [{ label: 'I agree — enable processing', onPress: () => { props.onEnableProcessing(); setBackupSheet(false); } }]
@@ -388,8 +387,8 @@ export function SettingsScreen(props: SettingsProps) {
           visible={deleteSheet}
           title={busy === 'delete' ? 'Deleting…' : 'Delete your nights?'}
           body={busy === 'delete'
-            ? 'Removing your recordings and reports. Please keep the app open.'
-            : `This permanently removes recordings, dates, and reports from the selected locations. Purchase records held by ${Platform.OS === 'android' ? 'Google Play' : 'the App Store'} are not erased. Export first if you need a copy. This cannot be undone.`}
+            ? 'Removing recordings and reports. Keep the app open.'
+            : `Permanently removes recordings, dates, and reports from the selected locations. ${Platform.OS === 'android' ? 'Google Play' : 'App Store'} purchase records remain. Export first if needed. This cannot be undone.`}
           actions={busy === 'delete' ? [] : [
             ...(hasCloudIdentity
               ? [{

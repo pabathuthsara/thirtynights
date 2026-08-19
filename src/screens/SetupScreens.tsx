@@ -56,7 +56,10 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue, notificat
   const [allowing, setAllowing] = useState(false);
   const { width, height, fontScale } = useWindowDimensions();
   const largeText = fontScale > 1.3;
-  const compact = height < 720 || width < 360 || largeText;
+  // A standard Android phone is roughly 800 logical pixels tall. Keep the
+  // combined time/permission step compact there so the primary and secondary
+  // actions are both visible without scrolling.
+  const compact = height < 820 || width < 360 || largeText;
 
   const select = (nextHour: number, nextMinute: number) => {
     if (Platform.OS !== 'web') void Haptics.selectionAsync().catch(() => undefined);
@@ -82,8 +85,8 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue, notificat
         </Text>
         <Text style={styles.body}>
           {notification
-            ? 'Choose a gentle reminder time. The question stays open all day, so you can answer whenever it feels right.'
-            : 'The question arrives once, at this time. Change it whenever your nights change.'}
+            ? 'Choose a reminder time. You can still answer whenever you like.'
+            : 'Your question arrives once at this time. Change it anytime.'}
         </Text>
       </Stagger>
 
@@ -147,21 +150,15 @@ export function HourPickerScreen({ hour, minute, onChange, onContinue, notificat
                 </View>
                 <View style={styles.previewCopy}>
                   <Text style={styles.previewTitle}>One private reminder</Text>
-                  <Text style={styles.previewBody}>No promotions. Never more than once a day.</Text>
+                  <Text style={styles.previewBody}>No promotions. Once a day at most.</Text>
                 </View>
               </View>
-              <NotificationPreviewCard
-                hour={hour}
-                minute={minute}
-                nightIndex={notification.nightIndex}
-                question={notification.question}
-              />
             </View>
           </Stagger>
 
           <Stagger index={3} style={styles.actionStack}>
             <Button icon={Check} loading={allowing} onPress={() => void allowNotification()}>
-              Allow one nightly reminder
+              Allow nightly reminder
             </Button>
             <TextButton onPress={() => { if (!allowing) notification.onSkip(); }}>Not now</TextButton>
           </Stagger>
@@ -188,9 +185,9 @@ export function NotificationPrimerScreen({ hour, minute, nightIndex, question, o
     <Screen contentStyle={styles.setupScreen}>
       <Stagger index={0}>
         <Text style={textStyles.eyebrow}>ONE NOTIFICATION</Text>
-        <Text accessibilityRole="header" style={styles.title}>The app has to reach you.</Text>
+        <Text accessibilityRole="header" style={styles.title}>Allow a nightly reminder.</Text>
         <Text style={styles.body}>
-          One question a night, at {formatClock(hour, minute)}. Nothing promotional. Never more than once a day.
+          One question at {formatClock(hour, minute)}. No promotions.
         </Text>
       </Stagger>
 

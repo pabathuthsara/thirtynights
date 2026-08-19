@@ -24,22 +24,22 @@ const disclosureRows = [
   {
     icon: Database,
     title: 'What leaves this phone',
-    body: 'Your raw voice recordings and the night and date attached to each answer.',
+    body: 'Recordings, night number, and date.',
   },
   {
     icon: CloudUpload,
     title: 'Where it is stored',
-    body: 'Supabase securely stores the recordings for your private account.',
+    body: 'Encrypted in your private Supabase account.',
   },
   {
     icon: Sparkles,
     title: 'Where it is processed',
-    body: 'OpenAI transcribes your recordings and creates your private reflections from those transcripts.',
+    body: 'OpenAI transcribes audio and writes private reflections.',
   },
   {
     icon: LockKeyhole,
     title: 'How it is protected',
-    body: 'Encrypted in transit and at rest, but not end-to-end encrypted. Nothing uploads until you choose this.',
+    body: 'Encrypted in transit and at rest; not end-to-end encrypted.',
   },
 ] as const;
 
@@ -90,8 +90,8 @@ export function ReflectionSetupScreen({
   }, [onShown, setupNight]);
 
   const primary = (() => {
-    if (!connected) return { label: 'Create account and prepare my reflection', action: onAuth, icon: UserRound };
-    if (!processingConsent) return { label: 'I agree — enable reflection processing', action: onConsent, icon: ShieldCheck };
+    if (!connected) return { label: 'Create account', action: onAuth, icon: UserRound };
+    if (!processingConsent) return { label: 'Allow reflection processing', action: onConsent, icon: ShieldCheck };
     if (readiness.state === 'ready') return { label: 'Open my reflection', action: onOpenReport, icon: Sparkles };
     if (readiness.state === 'processing') return { label: 'Check progress', action: onSync, icon: CloudUpload };
     if (readiness.state === 'prepared') return { label: 'Done — return home', action: onBack, icon: Check };
@@ -106,34 +106,36 @@ export function ReflectionSetupScreen({
           {firstReflection ? 'Prepare your seven-night reflection.' : `Prepare your night-${readiness.checkpoint} reflection.`}
         </Text>
         <Text style={styles.body}>
-          {readiness.recordedCount === 1 ? 'Your recording is' : 'Your recordings are'} safe on this phone. To create this reflection, Thirty Nights needs a recoverable account, secure backup, and your explicit permission to process it.
+          {readiness.recordedCount === 1 ? 'Your recording is' : 'Your recordings are'} safe here. Connect an account, allow processing, and back {readiness.recordedCount === 1 ? 'it' : 'them'} up.
         </Text>
       </Stagger>
 
       <Stagger index={1}>
-        <View style={styles.disclosureCard}>
-          <LinearGradient colors={gradients.cardSheen} style={styles.sheen} pointerEvents="none" />
-          {disclosureRows.map(({ icon: Icon, title, body }) => (
-            <View key={title} style={styles.disclosureRow}>
-              <View style={styles.iconCircle}><Icon size={17} strokeWidth={1.9} color={colors.roseText} /></View>
-              <View style={styles.rowCopy}>
-                <Text style={styles.rowTitle}>{title}</Text>
-                <Text style={styles.rowBody}>{body}</Text>
+        <View style={styles.disclosureShadow}>
+          <View style={styles.disclosureCard}>
+            <LinearGradient colors={gradients.cardSheen} style={styles.sheen} pointerEvents="none" />
+            {disclosureRows.map(({ icon: Icon, title, body }) => (
+              <View key={title} style={styles.disclosureRow}>
+                <View style={styles.iconCircle}><Icon size={17} strokeWidth={1.9} color={colors.roseText} /></View>
+                <View style={styles.rowCopy}>
+                  <Text style={styles.rowTitle}>{title}</Text>
+                  <Text style={styles.rowBody}>{body}</Text>
+                </View>
               </View>
-            </View>
-          ))}
-          <Text style={styles.retention}>
-            Withdrawing permission stops future uploads and AI processing. Already uploaded data remains in your private account until you use Delete everything. See the Privacy Policy for the reviewed retention terms.
-          </Text>
-          <TextButton onPress={onPrivacy}>Read the Privacy Policy</TextButton>
+            ))}
+            <Text style={styles.retention}>
+              Withdraw to stop future uploads and processing. Delete everything removes stored data. See the Privacy Policy for retention details.
+            </Text>
+            <TextButton onPress={onPrivacy}>Read the Privacy Policy</TextButton>
+          </View>
         </View>
       </Stagger>
 
       <Stagger index={2}>
         <Text style={styles.sectionLabel}>YOUR SETUP</Text>
         <View style={styles.checklist}>
-          <SetupRow done={accountDone} title="Recoverable account" detail={accountDone ? 'Connected' : 'Keeps purchases and backup attached to you'} />
-          <SetupRow done={consentDone} title="Reflection processing permission" detail={consentDone ? 'Permission given' : 'A separate, affirmative choice'} />
+          <SetupRow done={accountDone} title="Recoverable account" detail={accountDone ? 'Connected' : 'Links purchases and backup'} />
+          <SetupRow done={consentDone} title="Reflection processing permission" detail={consentDone ? 'Allowed' : 'Your choice'} />
           <SetupRow
             done={backupDone}
             active={syncing || readiness.state === 'uploading'}
@@ -164,15 +166,15 @@ export function ReflectionSetupScreen({
         ) : null}
         <Text style={styles.safeClose}>
           {readiness.state === 'prepared'
-            ? 'Setup is complete. Your reflection will be prepared from the recordings included in this checkpoint.'
-            : 'You can close this at any time. Your recordings stay on this phone and tonight’s ritual remains available.'}
+            ? 'Setup is complete. Your reflection will use this checkpoint’s recordings.'
+            : 'You can close this anytime. Your recordings stay here.'}
         </Text>
         {readiness.state !== 'prepared' ? (
           <TextButton onPress={() => {
             trackAnalyticsEvent('report_setup_deferred', { afterNight: setupNight });
             onBack();
           }}>
-            Keep this night on my phone for now
+            Keep it on this phone
           </TextButton>
         ) : null}
       </Stagger>
@@ -209,7 +211,7 @@ export function PurchaseSuccessScreen({ plan, onContinue }: { plan: 'paid30' | '
         <Text style={styles.aside}>Your chapter continues</Text>
         <Text accessibilityRole="header" style={styles.successTitle}>Nights 8–30 are open.</Text>
         <Text style={styles.successBody}>
-          Your first seven nights are already part of the same chapter. Night 8 is your next destination, ready on its scheduled date.
+          Your first seven stay in this chapter. Night 8 opens on its scheduled date.
         </Text>
       </Stagger>
       <Stagger index={2} style={styles.actions}>
@@ -224,6 +226,11 @@ const styles = StyleSheet.create({
   aside: { color: colors.paperDim, fontFamily: typography.serifItalic, fontSize: 17 },
   title: { ...textStyles.title, fontSize: 38, lineHeight: 45, marginTop: 10 },
   body: { ...textStyles.bodySmall, fontSize: 16, lineHeight: 25, marginTop: 12 },
+  disclosureShadow: {
+    borderRadius: radii.xl,
+    backgroundColor: surfaces.card,
+    ...shadows.soft,
+  },
   disclosureCard: {
     gap: 16,
     padding: 20,
@@ -232,7 +239,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(184,134,53,0.22)',
     backgroundColor: surfaces.card,
     overflow: 'hidden',
-    ...shadows.soft,
   },
   sheen: { position: 'absolute', top: 0, left: 0, right: 0, height: 80 },
   disclosureRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },

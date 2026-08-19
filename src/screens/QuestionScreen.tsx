@@ -469,13 +469,13 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
           </View>
         </Stagger>
         <Stagger index={2} style={[styles.questionFooter, compactLayout && styles.compactQuestionFooter]}>
-          <Text style={styles.note}>You get one take. There is no playback until it is revealed.</Text>
+          <Text style={styles.note}>One take. Playback unlocks with your reflection.</Text>
           <Button onPress={() => void continueToRecorder()}>I&apos;m ready</Button>
         </Stagger>
         <BottomSheet
           visible={sheet === 'primer'}
           title="We need the microphone."
-          body="Only while you are recording, and only on this device until you choose otherwise."
+          body="Only while recording. Audio stays here until you choose backup."
           actions={[
             { label: 'Allow', onPress: () => void requestMic() },
             { label: 'Not now', variant: 'outline', onPress: () => setSheet(null) },
@@ -507,10 +507,10 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
         <Waveform levels={recording ? levels : undefined} active={recording} idle={!recording && finalDuration === 0} compact />
         <Text style={[styles.limitHint, suggestedReached && styles.limitHintMet]}>
           {nearCap
-            ? `Wrapping up at five minutes — ${Math.max(0, MAX_SECONDS - Math.floor(seconds))}s left.`
+            ? `Five-minute limit · ${Math.max(0, MAX_SECONDS - Math.floor(seconds))}s left`
             : suggestedReached
-              ? 'You have said plenty. Release whenever you are ready.'
-              : 'Ninety seconds is plenty. Five minutes is the ceiling.'}
+              ? 'You can seal whenever you are ready.'
+              : 'Aim for 90 seconds · 5-minute limit'}
         </Text>
       </View>
 
@@ -606,7 +606,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
             ? latched ? 'TAP TO SEAL' : 'RELEASE TO SEAL'
             : Platform.OS === 'web' ? 'CLICK TO START · HOLD TO TALK' : 'TAP TO START · HOLD TO TALK'}
         </Text>
-        {!recording ? <Text style={styles.holdHelp}>A quick tap keeps recording so you can put the phone down.</Text> : null}
+        {!recording ? <Text style={styles.holdHelp}>Tap once for hands-free recording.</Text> : null}
       </View>
 
       {/* A real, visible sealing state. This used to be a silent frozen screen. */}
@@ -615,7 +615,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
           <View style={styles.sealingCard}>
             <ActivityIndicator color={colors.roseText} />
             <Text style={styles.sealingText}>Sealing your take…</Text>
-            <Text style={styles.sealingHint}>Writing it to this device before anything else happens.</Text>
+            <Text style={styles.sealingHint}>Saving to this device.</Text>
           </View>
         </View>
       ) : null}
@@ -623,7 +623,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       <BottomSheet
         visible={sheet === 'short'}
         title={`That was ${finalDuration} ${finalDuration === 1 ? 'second' : 'seconds'}.`}
-        body="Short is allowed. But you have not used your take yet, so you can start over if you would rather."
+        body="Short is fine. Restart now, or seal this take."
         actions={[
           { label: 'Start this night over', variant: 'outline', onPress: () => void discard() },
           { label: 'Seal it anyway', onPress: () => void seal(finalDuration, finalUri) },
@@ -633,7 +633,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       <BottomSheet
         visible={sheet === 'denied'}
         title="Microphone access is off."
-        body="Turn it on in system Settings, then come straight back. Tonight stays open until you are ready."
+        body="Enable it in system Settings. Tonight stays open."
         actions={[
           { label: 'Open system settings', onPress: () => void Linking.openSettings().catch(() => undefined) },
           { label: 'Check again', variant: 'outline', onPress: () => void requestMic() },
@@ -657,7 +657,7 @@ export function QuestionScreen({ nightIndex, question, onBack, onSeal }: {
       <BottomSheet
         visible={sheet === 'leave'}
         title="Leave without sealing?"
-        body="Nothing gets saved and tonight stays empty."
+        body="This take will not be saved."
         actions={[
           { label: 'Keep recording', onPress: () => setSheet(null) },
           { label: 'Leave', variant: 'ember', onPress: async () => { await recorder.stop(); recordingRef.current = false; onBack(); } },

@@ -84,7 +84,7 @@ function report(status: Report['status']): Report {
 }
 
 describe('reflection conversion milestones', () => {
-  it('makes setup actionable immediately after the first local seal', () => {
+  it('does not present reflection setup after the first local seal', () => {
     const firstSeal = snapshot([sealedNight(1)]);
 
     expect(reflectionReadiness(firstSeal)).toMatchObject({
@@ -95,14 +95,15 @@ describe('reflection conversion milestones', () => {
       checkpoint: 7,
     });
     expect(reflectionSetupIncomplete(firstSeal)).toBe(true);
-    expect(shouldShowFirstReflectionSetup(firstSeal)).toBe(true);
+    expect(reflectionReadiness(firstSeal).checkpointDue).toBe(false);
+    expect(shouldShowFirstReflectionSetup(firstSeal)).toBe(false);
   });
 
-  it('treats the first successful seal as first even when an earlier night was missed', () => {
+  it('does not present reflection setup for an early seal after a missed night', () => {
     const firstSeal = snapshot([night(1, 'missed'), sealedNight(2)]);
 
     expect(reflectionReadiness(firstSeal).recordedCount).toBe(1);
-    expect(shouldShowFirstReflectionSetup(firstSeal)).toBe(true);
+    expect(shouldShowFirstReflectionSetup(firstSeal)).toBe(false);
   });
 
   it('does not repeat the first setup prompt after that surface was shown', () => {
@@ -174,6 +175,7 @@ describe('reflection conversion milestones', () => {
       recordedCount,
       unbackedCount: 0,
       checkpoint: 7,
+      checkpointDue: true,
     });
     expect(reflectionSetupIncomplete(checkpoint)).toBe(false);
   });

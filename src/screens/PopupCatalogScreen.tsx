@@ -16,7 +16,7 @@ export function PopupCatalogScreen({ onBack }: { onBack: () => void }) {
       <Stagger index={0}>
         <Text accessibilityRole="header" style={styles.title}>Supporting states</Text>
         <Text style={styles.body}>
-          All twenty-five specified moments are represented here. Full-screen, caption, and automatic states are labelled by behavior.
+          Preview all 25 supporting moments and behaviors.
         </Text>
       </Stagger>
 

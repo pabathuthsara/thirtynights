@@ -33,10 +33,10 @@ import type {
 } from '@/types';
 
 const included = [
-  'Nights 8–30 in this same chapter',
-  'Your full night-30 reflection',
-  'Private one-take recordings and playable evidence',
-  'Exportable recordings, dates, and reflections',
+  '23 more nightly questions',
+  'Your night-30 reflection',
+  'Playable recording moments',
+  'Exportable audio, dates, and reflections',
 ] as const;
 
 function storeName() {
@@ -54,7 +54,7 @@ function analyticsStoreName(): AnalyticsStoreName {
 function offerCopy(plan: ProductPlan) {
   return plan === 'paid90'
     ? { title: 'Ninety nights', detail: 'Includes reflections at nights 30, 60, and 90' }
-    : { title: 'Thirty Nights', detail: 'Unlock nights 8–30 and your full night-30 reflection' };
+    : { title: 'Thirty Nights', detail: 'Nights 8–30 and your full reflection' };
 }
 
 export function PaywallScreen({
@@ -357,11 +357,11 @@ export function PaywallScreen({
           <Text style={styles.aside}>{nightsKept >= 7 ? '7 of 30 nights reached' : `${nightsKept} of 30 nights kept`}</Text>
           <Text accessibilityRole="header" style={styles.title}>Continue your chapter.</Text>
           <Text style={styles.body}>
-            Unlock nights 8–30 and your full night-30 reflection. Your first seven nights stay exactly where they are.
+            Unlock nights 8–30 and your full reflection. Your first seven stay here.
           </Text>
           <View style={styles.reassure}>
             <Lock size={13} strokeWidth={2} color={colors.mossText} />
-            <Text style={styles.reassureText}>One payment · no subscription · nothing renews</Text>
+            <Text style={styles.reassureText}>One payment · no subscription</Text>
           </View>
         </Stagger>
 
@@ -462,7 +462,7 @@ export function PaywallScreen({
                   />
                   <View style={styles.compareHint}>
                     {showComparison ? <ChevronUp size={14} color={colors.boneFaint} /> : <ChevronDown size={14} color={colors.boneFaint} />}
-                    <Text style={styles.compareHintText}>The 30-night journey remains complete on its own.</Text>
+                    <Text style={styles.compareHintText}>The 30-night journey is complete on its own.</Text>
                   </View>
                 </View>
               ) : null}
@@ -475,7 +475,7 @@ export function PaywallScreen({
             <TextButton onPress={onPrivacy}>Privacy Policy</TextButton>
           </View>
           <Text style={styles.legalNote}>
-            Charged once through your {storeName()} account at the localized price shown. This is not a subscription and does not renew.
+            Charged once through {storeName()} at the price shown. No renewal.
           </Text>
           <TextButton onPress={dismiss}>Not now</TextButton>
         </Stagger>
@@ -508,7 +508,7 @@ function OfferCard({ plan, product, loading, active, covered, dominant = false, 
     >
       <LinearGradient colors={gradients.cardSheen} style={styles.offerSheen} pointerEvents="none" />
       {dominant ? (
-        <View style={styles.bestFit}><Sparkle size={8} color={colors.white} /><Text style={styles.bestFitText}>THE THIRTY NIGHTS JOURNEY</Text></View>
+        <View style={styles.bestFit}><Sparkle size={8} color={colors.white} /><Text style={styles.bestFitText}>THE 30-NIGHT JOURNEY</Text></View>
       ) : null}
       <View style={[styles.offerTop, narrow && styles.offerTopNarrow]}>
         <View style={styles.offerHeading}>
@@ -518,7 +518,7 @@ function OfferCard({ plan, product, loading, active, covered, dominant = false, 
         <Text style={[styles.price, narrow && styles.priceNarrow, !product && styles.priceUnavailable]}>{price}</Text>
       </View>
       <Text style={styles.offerDetail}>{copy.detail}</Text>
-      <Text style={styles.once}>{covered ? 'ALREADY UNLOCKED FOR THIS ACCOUNT' : 'ONE PAYMENT · LIFETIME ACCESS TO THESE NIGHTS'}</Text>
+      <Text style={styles.once}>{covered ? 'ALREADY UNLOCKED' : 'ONE PAYMENT · THESE NIGHTS STAY YOURS'}</Text>
     </Pressable>
   );
 }
@@ -531,10 +531,10 @@ function verificationTitle(status: PurchaseVerification['status']) {
 }
 
 function verificationBody(status: PurchaseVerification['status']) {
-  if (status === 'store-confirming') return 'Store confirmation did not finish. Restore to check for a completed purchase, or abandon this interrupted attempt.';
-  if (status === 'pending-approval') return 'This status survives closing the app. Access opens automatically after approval; do not purchase again.';
-  if (status === 'failed') return 'Use Restore purchase to check your store account before starting another checkout.';
-  return 'You can safely close the app. We will reconcile the authoritative grant when it arrives.';
+  if (status === 'store-confirming') return 'Restore to check for a completed purchase, or clear this attempt.';
+  if (status === 'pending-approval') return 'Access opens after approval. Do not purchase again.';
+  if (status === 'failed') return 'Restore before starting another checkout.';
+  return 'You can close the app while access finishes.';
 }
 
 const styles = StyleSheet.create({

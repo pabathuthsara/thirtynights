@@ -28,31 +28,31 @@ export const intentions: readonly Intention[] = [
     id: 'remember',
     label: 'Remember this season',
     aside: 'Before the details go',
-    promise: 'Every night you keep becomes a sticker on a sheet you can open again years from now.',
+    promise: 'Each night becomes a sticker you can return to years later.',
   },
   {
     id: 'hear',
     label: 'Hear myself think',
     aside: 'Out loud, not on paper',
-    promise: 'One take, no editing, no playback until it has had time to settle. You get your real voice back, not your edited one.',
+    promise: 'One unedited take lets you hear your real voice again.',
   },
   {
     id: 'someone',
     label: 'Leave something behind',
     aside: 'For someone who will want it',
-    promise: 'Your recordings stay yours. Export the whole archive — audio and all — whenever you want it.',
+    promise: 'Your archive stays yours and can be exported anytime.',
   },
   {
     id: 'habit',
     label: 'Keep one honest habit',
     aside: 'Small enough to actually do',
-    promise: 'One question, once a night, at the hour you chose. Never a second notification.',
+    promise: 'One question and one reminder at your chosen time.',
   },
   {
     id: 'unwind',
     label: 'Put the day down',
     aside: 'Somewhere other than my head',
-    promise: 'Two minutes at the end of the night, then it is sealed and out of your hands until it means something.',
+    promise: 'Speak for two minutes, then leave the day sealed.',
   },
 ];
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { CheckCircle2, LockKeyhole, Mail, ShieldCheck } from 'lucide-react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { CheckCircle2, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-react-native';
 
 import { AppHeader } from '@/components/AppHeader';
 import { Button, TextButton } from '@/components/Buttons';
@@ -29,6 +29,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [focused, setFocused] = useState<'email' | 'password' | null>(null);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -45,8 +46,8 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
       setRecoveryStep(state.step);
       setError('');
       setNotice(state.step === 'set-password'
-        ? 'Reset link verified. Choose a new password for this account.'
-        : 'If an account uses this email, a reset link is on its way. Open it on this device.');
+        ? 'Reset link verified. Choose a new password.'
+        : 'If the account exists, a reset link is on its way. Open it here.');
     };
 
     const unsubscribeRecovery = subscribeToPasswordRecovery((state, recoveryError) => {
@@ -93,7 +94,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
     if (mode === 'recovery' && recoveryStep === 'email' && !validEmail()) return;
     if (mode === 'recovery' && recoveryStep === 'set-password' && !validPassword()) return;
     if (mode !== 'signup' && hasLocalRecordings) {
-      setError('This phone has unmerged recordings. Sign-in is stopped to avoid changing their owner. Link a new identity instead, or contact support for a reviewed merge.');
+      setError('This phone has unmerged recordings. Create a new account here or contact support before signing in.');
       return;
     }
     if (!isSupabaseConfigured) {
@@ -116,15 +117,15 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
         setEmail(state.email);
         setPassword('');
         setRecoveryStep(state.step);
-        setNotice('If an account uses this email, a reset link is on its way. Open it on this device.');
+        setNotice('If the account exists, a reset link is on its way. Open it here.');
         return;
       } else if (recoveryStep === 'email-sent') {
         const state = await getPasswordRecoveryState();
         if (!state) throw new Error('Start the password-reset request again.');
         setRecoveryStep(state.step);
         setNotice(state.step === 'set-password'
-          ? 'Reset link verified. Choose a new password below.'
-          : 'The reset link has not been opened on this device yet. Use the newest email and return here.');
+          ? 'Reset link verified. Choose a new password.'
+          : 'Open the newest reset email on this device.');
         return;
       } else {
         const user = await completePasswordRecovery(password);
@@ -151,7 +152,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
       setLoading(true);
       const state = await sendPasswordReset(email);
       setRecoveryStep(state.step);
-      setNotice('If an account uses this email, a fresh reset link is on its way. Use the newest email.');
+      setNotice('A fresh reset link is on its way. Use the newest email.');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'A new reset email could not be sent.');
     } finally {
@@ -198,16 +199,20 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
         </Text>
         <Text style={styles.body}>
           {mode === 'recovery'
-            ? 'Use the email connected to your account. The reset link must be opened on this device.'
+            ? 'Open the reset link on this device.'
             : mode === 'signup'
-              ? 'Choose an email and password. Your account is ready immediately—no confirmation email is required.'
-              : 'Sign in with the email and password connected to your nights.'}
+              ? 'Create an account with your email and a password.'
+              : 'Use the account linked to your nights.'}
         </Text>
       </Stagger>
 
       <Stagger index={1} style={styles.stack}>
         {showEmailField ? (
-          <View style={[styles.fieldWrap, focused === 'email' && styles.fieldFocused, Boolean(error) && styles.fieldError]}>
+          <Pressable
+            accessible={false}
+            onPress={() => field.current?.focus()}
+            style={[styles.fieldWrap, focused === 'email' && styles.fieldFocused, Boolean(error) && styles.fieldError]}
+          >
             <Mail size={18} strokeWidth={1.9} color={focused === 'email' ? colors.roseText : colors.boneFaint} />
             <TextInput
               ref={field}
@@ -217,7 +222,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
               autoComplete="email"
               textContentType="emailAddress"
               keyboardType="email-address"
-              inputMode="email"
+              showSoftInputOnFocus
               returnKeyType={mode === 'recovery' ? 'go' : 'next'}
               onSubmitEditing={() => {
                 if (mode === 'recovery') void submit();
@@ -231,7 +236,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
               onBlur={() => setFocused(null)}
               style={styles.field}
             />
-          </View>
+          </Pressable>
         ) : (
           <View
             accessible
@@ -260,7 +265,8 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
               autoCorrect={false}
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
               textContentType={mode === 'signin' ? 'password' : 'newPassword'}
-              secureTextEntry
+              secureTextEntry={!passwordVisible}
+              showSoftInputOnFocus
               returnKeyType="go"
               onSubmitEditing={() => void submit()}
               placeholder={mode === 'signin' ? 'Password' : mode === 'recovery' ? 'Choose a new password' : 'Create a password'}
@@ -271,6 +277,18 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
               onBlur={() => setFocused(null)}
               style={styles.field}
             />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={passwordVisible ? 'Hide password' : 'Show password'}
+              accessibilityState={{ expanded: passwordVisible }}
+              hitSlop={10}
+              onPress={() => setPasswordVisible((visible) => !visible)}
+              style={({ pressed }) => [styles.passwordToggle, pressed && styles.passwordTogglePressed]}
+            >
+              {passwordVisible
+                ? <EyeOff size={20} strokeWidth={1.9} color={colors.roseText} />
+                : <Eye size={20} strokeWidth={1.9} color={colors.boneFaint} />}
+            </Pressable>
           </View>
         ) : null}
 
@@ -328,7 +346,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
           </View>
         ) : (
           <Text style={styles.recovery}>
-            Existing-account sign-in is disabled while this device owns recordings that have not been deliberately merged.
+            Sign-in is unavailable while this device has unmerged recordings.
           </Text>
         )}
       </Stagger>
@@ -336,7 +354,7 @@ export function AuthScreen({ hasLocalRecordings, onBack, onAuthenticated, onUnav
       <Stagger index={2} style={styles.privacyCard}>
         <ShieldCheck size={17} strokeWidth={2} color={colors.mossText} />
         <Text style={styles.privacy}>
-          Raw audio stays on this device until your identity is recoverable. Cloud processing is used only after you consent, and only to write your reflections.
+          Audio stays here until you allow backup and reflection processing.
         </Text>
       </Stagger>
     </Screen>
@@ -378,6 +396,14 @@ const styles = StyleSheet.create({
     fontWeight: weight.medium,
     fontSize: 16,
   },
+  passwordToggle: {
+    width: 36,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: -8,
+  },
+  passwordTogglePressed: { opacity: 0.6 },
   verifiedEmail: {
     minHeight: 62,
     flexDirection: 'row',

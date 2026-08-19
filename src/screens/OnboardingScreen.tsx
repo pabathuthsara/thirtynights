@@ -27,15 +27,15 @@ import { trackAnalyticsEvent } from '@/services/analytics';
 
 const slides = [
   {
-    eyebrow: 'Seven nights, included',
-    title: 'One honest answer each night.',
-    body: 'Speak once, seal it, and hear the patterns that only time can reveal.',
+    eyebrow: 'Your first seven',
+    title: 'One honest answer a night.',
+    body: 'Speak once. Seal it. Hear what time reveals.',
     visual: 'seven',
   },
   {
     eyebrow: 'How the full journey works',
     title: 'Seven nights reveal the first thread.',
-    body: 'Start small, receive something meaningful, then decide whether you want to keep going.',
+    body: 'Start with seven. Continue only if it feels worthwhile.',
     visual: 'journey',
   },
 ] as const;
@@ -110,9 +110,9 @@ function SlideVisual({ kind, reducedMotion, compact }: { kind: Visual; reducedMo
 
 function JourneyTimeline() {
   const entries = [
-    ['Tonight', 'Answer one thoughtful question in your own voice.'],
+    ['Tonight', 'Answer one question in your own voice.'],
     ['Night 7', 'Receive your first private reflection.'],
-    ['After night 7', 'One payment unlocks nights 8–30. Nothing renews.'],
+    ['After night 7', 'One payment opens nights 8–30.'],
   ] as const;
 
   return (
@@ -255,7 +255,7 @@ export function OnboardingScreen({ onComplete, onPreview }: { onComplete: () => 
                     <View style={styles.offerCard}>
                       <View style={styles.offerDot}><Sparkle size={10} color={colors.white} /></View>
                       <Text maxFontSizeMultiplier={2} style={styles.offerText}>
-                        Your first 7 nights are included free. <Text style={styles.offerStrong}>No card required.</Text>
+                        First 7 nights included. <Text style={styles.offerStrong}>No card required.</Text>
                       </Text>
                     </View>
                   ) : (
@@ -264,7 +264,7 @@ export function OnboardingScreen({ onComplete, onPreview }: { onComplete: () => 
                       <View style={styles.privacyCard}>
                         <ShieldCheck size={19} strokeWidth={1.9} color={colors.mossText} />
                         <Text maxFontSizeMultiplier={2} style={styles.privacyText}>
-                          Recordings stay on this phone unless you choose secure backup and reflection processing. Nothing is uploaded or sent to an AI provider without your clear permission.
+                          Recordings stay here. Nothing uploads or reaches AI without your permission.
                         </Text>
                       </View>
                     </>
@@ -297,7 +297,7 @@ export function OnboardingScreen({ onComplete, onPreview }: { onComplete: () => 
           <Text maxFontSizeMultiplier={1.6} style={styles.pageCount}>{index + 1} / {slides.length}</Text>
         </View>
         <Button icon={ArrowRight} onPress={() => (last ? onComplete() : goTo(index + 1))}>
-          {last ? 'Choose my reminder' : 'See how it works'}
+          {last ? 'Choose a reminder' : 'See how it works'}
         </Button>
       </View>
     </Screen>

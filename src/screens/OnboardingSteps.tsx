@@ -36,7 +36,7 @@ export function IntentionScreen({ selected, onToggle, onContinue, onSkip }: {
         <Text style={styles.aside}>Before your first night</Text>
         <Text accessibilityRole="header" style={styles.title}>What brings you here?</Text>
         <Text style={styles.body}>
-          Pick as many as are true — most people have more than one. It only changes what the app says back to you.
+          Choose any that fit. This only personalizes the experience.
         </Text>
       </Stagger>
 
@@ -131,10 +131,10 @@ export function PlanScreen({ picked, hour, minute, notificationsEnabled, freeNig
       <Stagger index={0}>
         <Text style={styles.aside}>Your first seven nights</Text>
         <Text accessibilityRole="header" style={styles.title}>
-          Your first {freeNights} nights are included free.
+          Your first {freeNights} nights are free.
         </Text>
         <Text style={styles.planIntro}>
-          No card required. Night {freeNights} brings your first reflection. After that, one payment unlocks nights {freeNights + 1}–{fullLength} in this same journey. Nothing renews.
+          No card required. Your first reflection arrives after night {freeNights}. Continue to night {fullLength} with one payment.
         </Text>
       </Stagger>
 
@@ -153,11 +153,11 @@ export function PlanScreen({ picked, hour, minute, notificationsEnabled, freeNig
           <View style={styles.planRow}>
             <Clock size={14} strokeWidth={2} color={colors.paperDim} />
             <Text style={styles.planWhen}>
-              {notificationsEnabled ? 'Your first question arrives' : 'Your first question opens'} at {formatClock(hour, minute)}
+              {notificationsEnabled ? 'First question arrives' : 'First question opens'} at {formatClock(hour, minute)}
             </Text>
           </View>
           <Text style={styles.planThrough}>
-            Included through {formatLongDate(plan.freeEndsOn)}, when your first reflection is due.
+            Included through {formatLongDate(plan.freeEndsOn)}.
           </Text>
 
           <View style={styles.offerBoundary}>
@@ -191,8 +191,8 @@ export function PlanScreen({ picked, hour, minute, notificationsEnabled, freeNig
             style={styles.noteFlowers}
           />
           <Text style={styles.noteBody}>
-            I built this because I could not remember a single thing I thought about during a whole year of my life.
-            Thirty nights of your own voice is a strange and lovely thing to own. I hope you keep them all.
+            I built this to remember the thoughts ordinary days erase.
+            Thirty nights in your own voice is a lovely thing to keep.
           </Text>
           <Text style={styles.noteSign}>— the maker</Text>
         </View>

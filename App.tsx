@@ -3,6 +3,8 @@ import { ActivityIndicator, Animated, BackHandler, Linking, Platform, Share, Sty
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useFonts } from 'expo-font';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Fraunces_400Regular, Fraunces_400Regular_Italic, Fraunces_500Medium, Fraunces_600SemiBold } from '@expo-google-fonts/fraunces';
@@ -264,7 +266,7 @@ function ThirtyNightsApp() {
 
   const ownerSetup = (feature: string) => setNotice({
     title: `${feature} needs owner setup.`,
-    body: 'The production code is present, but the owner must supply the provider account, public app credentials, products, or published legal URL. The exact action is listed in docs/HANDOVER.md.',
+    body: 'Add the provider account or credentials listed in docs/HANDOVER.md.',
   });
 
   const openAuth = (from: RouteName) => { setReturnAfterAuth(from); setRoute('auth'); };
@@ -326,12 +328,23 @@ function ThirtyNightsApp() {
    * question, no audio, no duration — only that someone showed up. Keep it that
    * way. Anything from the recording itself must never reach this string.
    */
-  const shareNight = async (nightIndex: number) => {
+  const shareNight = async (nightIndex: number, imageBase64: string) => {
     const kept = recordedCount;
     const total = snapshot.accessTier === 'trial' ? 30 : snapshot.currentChapter.targetLength;
-    await Share.share({
-      title: 'Thirty Nights',
-      message: `Night ${nightIndex} kept — ${kept} of ${total}. Thirty Nights, one question a night.`,
+    if (Platform.OS === 'web') {
+      await Share.share({
+        title: 'Thirty Nights',
+        message: `Night ${nightIndex} kept — ${kept} of ${total}. Thirty Nights, one question a night.`,
+      });
+      return;
+    }
+    if (!await Sharing.isAvailableAsync()) throw new Error('Image sharing is unavailable on this device.');
+    const image = new File(Paths.cache, `thirty-nights-night-${nightIndex}.png`);
+    image.write(imageBase64, { encoding: 'base64' });
+    await Sharing.shareAsync(image.uri, {
+      mimeType: 'image/png',
+      UTI: 'public.png',
+      dialogTitle: 'Share your Thirty Nights keepsake',
     });
   };
 
@@ -382,21 +395,21 @@ function ThirtyNightsApp() {
 
     return [
       {
-        label: 'Your take is sealed on this device',
+        label: 'Saved on this device',
         state: 'done',
-        detail: `${sealed.length} ${sealed.length === 1 ? 'night' : 'nights'} kept locally${
+        detail: `${sealed.length} ${sealed.length === 1 ? 'night' : 'nights'} kept${
           currentNight.durationSec ? ` · latest ${formatDuration(currentNight.durationSec)}` : ''}`,
       },
       recoverable
         ? consented
           ? waiting.length
-            ? { label: 'Backing up your recordings', state: 'active' as const, detail: `${waiting.length} still to upload` }
-            : { label: 'Recordings are backed up', state: 'done' as const }
-          : { label: 'Reflection processing permission needed', state: 'skipped' as const, detail: 'Open the setup checklist here to review and enable it' }
-        : { label: 'No recoverable account yet', state: 'skipped' as const, detail: 'Raw audio stays on this device until you link one' },
+            ? { label: 'Backing up', state: 'active' as const, detail: `${waiting.length} waiting` }
+            : { label: 'Backup complete', state: 'done' as const }
+          : { label: 'Processing permission needed', state: 'skipped' as const, detail: 'Review it in setup' }
+        : { label: 'Account needed', state: 'skipped' as const, detail: 'Audio stays on this device' },
       recoverable && consented && !waiting.length
-        ? { label: 'Report queued for writing', state: 'active' as const, detail: 'It appears here as soon as the server finishes' }
-        : { label: 'Report not queued', state: 'skipped' as const, detail: 'A report is written only from recordings that are really backed up' },
+        ? { label: 'Creating your reflection', state: 'active' as const, detail: 'It appears here when ready' }
+        : { label: 'Reflection waiting', state: 'skipped' as const, detail: 'Complete backup first' },
     ];
   })();
 
@@ -453,7 +466,7 @@ function ThirtyNightsApp() {
       screen = <SealingScreen nightIndex={newlyEarned ?? currentNight.index} onDone={() => setRoute('reward')} />;
       break;
     case 'reward':
-      screen = <RewardScreen nightIndex={newlyEarned ?? currentNight.index} keptCount={recordedCount} targetLength={snapshot.currentChapter.targetLength} onDone={finishReward} onShare={() => void shareNight(newlyEarned ?? currentNight.index).catch((error: unknown) => setNotice({ title: 'Could not share.', body: error instanceof Error ? error.message : 'Try again.' }))} />;
+      screen = <RewardScreen nightIndex={newlyEarned ?? currentNight.index} keptCount={recordedCount} targetLength={snapshot.currentChapter.targetLength} onDone={finishReward} onShare={(imageBase64) => shareNight(newlyEarned ?? currentNight.index, imageBase64).catch((error: unknown) => { setNotice({ title: 'Could not share.', body: error instanceof Error ? error.message : 'Try again.' }); })} />;
       break;
     case 'generating':
       screen = (
@@ -540,7 +553,7 @@ function ThirtyNightsApp() {
             if (result.partial) {
               setNotice({
                 title: 'Partial export prepared.',
-                body: 'The archive includes all metadata and reports, plus every recording available on this device or from cloud backup. At least one raw recording was unavailable.',
+                body: 'Metadata, reports, and available recordings were included. Some raw audio was unavailable.',
               });
             }
           }}
@@ -629,8 +642,8 @@ function ThirtyNightsApp() {
       ) : screen}
       <BottomSheet
         visible={backupReminder}
-        title="Your first reflection still needs setup."
-        body={`${recordedCount} ${recordedCount === 1 ? 'night is' : 'nights are'} safe on this phone. A recoverable account, your processing permission, and secure backup prepare the private reflection at night 7.`}
+        title="Prepare your first reflection."
+        body={`${recordedCount} ${recordedCount === 1 ? 'night is' : 'nights are'} safe here. Connect an account, allow processing, and finish backup.`}
         actions={[
           { label: 'Finish setup', onPress: () => { setBackupReminder(false); setRoute('report-setup'); } },
           { label: 'Later', variant: 'outline', onPress: () => setBackupReminder(false) },

@@ -108,14 +108,14 @@ export function HomeScreen({
   }, [trialEnded]);
 
   const status = demoMode
-    ? { tone: colors.brassText, icon: CloudOff, copy: 'Developer preview · cloud backup is off.' }
+    ? { tone: colors.brassText, icon: CloudOff, copy: 'Preview · backup off.' }
     : unbackedCount
-    ? { tone: colors.brassText, icon: CloudOff, copy: `${unbackedCount} ${unbackedCount === 1 ? 'night is' : 'nights are'} waiting to back up.` }
+    ? { tone: colors.brassText, icon: CloudOff, copy: `${unbackedCount} ${unbackedCount === 1 ? 'night' : 'nights'} waiting to back up.` }
     : syncing
-      ? { tone: colors.brassText, icon: RefreshCw, copy: 'Tucking everything away…' }
+      ? { tone: colors.brassText, icon: RefreshCw, copy: 'Backing up…' }
       : missedCount
-        ? { tone: colors.boneDim, icon: Cloud, copy: `Up to date · ${missedCount} ${missedCount === 1 ? 'night' : 'nights'} gently unfilled.` }
-        : { tone: colors.mossText, icon: Cloud, copy: 'Your keepsake is up to date.' };
+        ? { tone: colors.boneDim, icon: Cloud, copy: `Up to date · ${missedCount} ${missedCount === 1 ? 'night' : 'nights'} left empty.` }
+        : { tone: colors.mossText, icon: Cloud, copy: 'Everything is up to date.' };
 
   const card = useMemo(() => {
     // The three states that ask for something keep the fuller note: they carry a
@@ -123,7 +123,7 @@ export function HomeScreen({
     if (demoMode) return {
       variant: 'note' as const,
       label: 'Developer preview · local only',
-      copy: 'This visual preview is detached from your real journey. Recording and cloud backup are turned off here.',
+      copy: 'Separate from your journey. Recording and backup are off.',
       action: onSettings,
       cta: 'Open preview settings',
       art: 'journal' as const,
@@ -132,8 +132,8 @@ export function HomeScreen({
       variant: 'note' as const,
       label: 'Purchase received',
       copy: purchaseVerification.status === 'pending-approval'
-        ? 'Approval is pending. Nights 8–30 open automatically when the store confirms it—do not purchase again.'
-        : 'We are finishing your nights 8–30 access. This status is safe to close.',
+        ? 'Waiting for store approval. Do not purchase again.'
+        : 'Finishing access to nights 8–30. You can close this.',
       action: onPaywall,
       cta: 'Check purchase status',
       art: 'journal' as const,
@@ -141,12 +141,12 @@ export function HomeScreen({
     if (trialEnded) return {
       variant: 'note' as const,
       label: 'Night 8 is next · locked',
-      copy: `Unlock nights 8–30 and your full night-30 reflection${offerPrice ? ` for ${offerPrice} once` : ' with one payment'}. Nothing renews.`,
+      copy: `Unlock nights 8–30 and your full reflection${offerPrice ? ` for ${offerPrice}` : ' with one payment'}.`,
       action: onPaywall,
       cta: offerPrice ? `Unlock nights 8–30 — ${offerPrice}` : 'Unlock nights 8–30',
       art: 'journal' as const,
     };
-    if (chapterClosed) return { variant: 'note' as const, label: 'This chapter is complete', copy: 'Your next collection is ready whenever you are.', action: onPaywall, cta: 'Begin the next thirty', art: 'journal' as const };
+    if (chapterClosed) return { variant: 'note' as const, label: 'This chapter is complete', copy: 'Your next collection is ready.', action: onPaywall, cta: 'Begin the next thirty', art: 'journal' as const };
     if (canRecord) return { variant: 'note' as const, label: "Tonight's question", copy: 'A sealed question is waiting for you.', action: onQuestion, cta: 'Open tonight’s letter', art: 'seal' as const };
     // A night unlocks on its date and stays open for the whole of it — the
     // chosen hour only decides when the reminder arrives. The old copy said
@@ -156,7 +156,7 @@ export function HomeScreen({
     const clock = formatClock(reminderHour, reminderMinute);
     const opensOn = currentNight.expectedLocalDate;
     const soon = opensOn === addLocalDays(localDateKey(now), 1) ? 'tomorrow' : `on ${formatLongDate(readDateKey(opensOn))}`;
-    const reminder = `Your reminder is set for ${clock}, but the question stays open all day — answer whenever suits.`;
+    const reminder = `Reminder set for ${clock}.`;
 
     // `currentNight` is only ever sealed when there is no later night to move on
     // to — `nextCurrentNight` prefers today, then the next unlocked future night,
@@ -181,19 +181,21 @@ export function HomeScreen({
 
   const reflectionCard = useMemo(() => {
     if (demoMode) return null;
-    if (!readiness.recordedCount) return null;
+    // A successful upload is backup, not a reflection. The card belongs only
+    // to a checkpoint (first on Night 7), never to an isolated early night.
+    if (!readiness.checkpointDue) return null;
     const firstReflection = readiness.checkpoint === 7;
     const reflectionLabel = firstReflection ? 'Your first reflection' : `Your night-${readiness.checkpoint} reflection`;
     if (readiness.state === 'ready') return {
       label: `${reflectionLabel} is ready`,
-      copy: `${firstReflection ? 'Seven' : readiness.checkpoint} nights have become something you can read and hear.`,
+      copy: 'Ready to read and hear.',
       cta: 'Open reflection',
       action: onReport,
       tone: 'ready' as const,
     };
     if (readiness.state === 'processing') return {
       label: `${reflectionLabel} is taking shape`,
-      copy: 'Processing continues safely if you close the app.',
+      copy: 'You can close the app while it finishes.',
       cta: 'View progress',
       action: onReport,
       tone: 'ready' as const,
@@ -202,14 +204,14 @@ export function HomeScreen({
       label: firstReflection && readiness.recordedCount === 6
         ? 'Your first reflection arrives tomorrow'
         : `${reflectionLabel} is prepared`,
-      copy: `${readiness.backedUpCount} ${readiness.backedUpCount === 1 ? 'night is' : 'nights are'} securely ready.`,
+      copy: `${readiness.backedUpCount} ${readiness.backedUpCount === 1 ? 'night' : 'nights'} ready.`,
       cta: 'Review setup',
       action: onReportSetup,
       tone: 'ready' as const,
     };
     if (readiness.state === 'failed') return {
       label: `${reflectionLabel} needs attention`,
-      copy: 'Your recordings remain safe. Open the checkpoint to retry.',
+      copy: 'Your recordings are safe. Tap to retry.',
       cta: 'Open checkpoint',
       action: onReport,
       tone: 'attention' as const,
@@ -217,13 +219,13 @@ export function HomeScreen({
     const step = authState !== 'authenticated'
       ? 'Create an account'
       : !processingConsent
-        ? 'Processing permission is still needed'
+        ? 'Allow processing'
         : readiness.state === 'attention'
           ? 'A backup needs another try'
           : `${readiness.unbackedCount} ${readiness.unbackedCount === 1 ? 'night is' : 'nights are'} waiting to back up`;
     return {
       label: `${reflectionLabel} needs setup`,
-      copy: `${readiness.recordedCount} ${readiness.recordedCount === 1 ? 'night saved' : 'nights saved'} on this phone · ${step}.`,
+      copy: `${readiness.recordedCount} ${readiness.recordedCount === 1 ? 'night' : 'nights'} saved here · ${step}.`,
       cta: 'Finish setup',
       action: onReportSetup,
       tone: 'attention' as const,
@@ -271,18 +273,6 @@ export function HomeScreen({
                 {recordedCount} {recordedCount === 1 ? 'night kept' : 'nights kept'}
               </Text>
             </View>
-          </View>
-          <View
-            accessible
-            accessibilityRole="image"
-            accessibilityLabel={syncing ? 'Synchronizing' : authState === 'authenticated' ? 'Cloud identity connected' : 'Saved on this device'}
-            style={[styles.identitySeal, authState === 'authenticated' && styles.connectedSeal]}
-          >
-            <Cloud
-              size={16}
-              strokeWidth={1.9}
-              color={syncing ? colors.brassText : authState === 'authenticated' ? colors.mossText : colors.boneFaint}
-            />
           </View>
         </View>
       </Stagger>
@@ -406,7 +396,7 @@ export function HomeScreen({
         <Stagger index={4}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${reflectionCard.label}. ${reflectionCard.copy}. ${reflectionCard.cta}`}
+            accessibilityLabel={`${reflectionCard.label}. ${reflectionCard.copy} ${reflectionCard.cta}`}
             onPress={reflectionCard.action}
             style={({ pressed }) => [
               styles.readinessCard,
@@ -461,18 +451,18 @@ function nightSheetTitle(night: Night) {
 function nightSheetBody(night: Night) {
   const date = night.expectedLocalDate;
   if (night.status === 'missed') {
-    return `${date} came and went without a recording. Missed nights can't be filled in later — that's what keeps the collection honest. The thread picks up again tonight.`;
+    return `${date}. This night stays empty; continue tonight.`;
   }
   if (night.status === 'sealed') {
     const length = night.durationSec ? ` It runs ${formatDuration(night.durationSec)}.` : '';
     const backup = !night.backedUp ? ' It is still waiting to back up.' : '';
-    return `Recorded on ${date}.${length} It stays tucked away until its next reflection checkpoint, then joins your Gallery.${backup}`;
+    return `Recorded ${date}.${length} Opens at its next reflection checkpoint.${backup}`;
   }
   if (night.status === 'revealed') {
     const length = night.durationSec ? ` ${formatDuration(night.durationSec)} of voice.` : '';
-    return `Recorded on ${date}.${length} You can play this one back from the Gallery.`;
+    return `Recorded ${date}.${length} Playback is available in Gallery.`;
   }
-  return `This question opens on ${date || 'its scheduled evening'}, at the hour you chose.`;
+  return `Opens on ${date || 'its scheduled date'}. Your reminder arrives at the time you chose.`;
 }
 
 const styles = StyleSheet.create({
@@ -533,22 +523,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
   },
-  identitySeal: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.line,
-    backgroundColor: surfaces.card,
-    marginBottom: 4,
-  },
-  connectedSeal: {
-    borderColor: 'rgba(90,116,98,0.34)',
-    backgroundColor: surfaces.success,
-  },
-
   // Must be allowed to *shrink*, not just grow. With a hard minHeight the board
   // kept its size when the note below grew and pushed the navigation off the
   // bottom of the screen.

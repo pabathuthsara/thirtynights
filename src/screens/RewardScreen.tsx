@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Image, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import Svg, {
+  Circle,
+  Defs,
+  Image as SvgImage,
+  LinearGradient as SvgLinearGradient,
+  Rect,
+  Stop,
+  Text as SvgText,
+} from 'react-native-svg';
 
 import { Button, TextButton } from '@/components/Buttons';
 import { Screen } from '@/components/Screen';
@@ -54,14 +63,16 @@ export function RewardScreen({ nightIndex, keptCount, targetLength, onDone, onSh
   keptCount: number;
   targetLength: number;
   onDone: () => void;
-  onShare: () => void;
+  onShare: (imageBase64: string) => void | Promise<void>;
 }) {
   const reducedMotion = useReducedMotion();
   const screenReaderEnabled = useScreenReaderEnabled();
   const { width, height, fontScale } = useWindowDimensions();
   const stickerIn = useRef(new Animated.Value(0)).current;
   const words = useRef(new Animated.Value(0)).current;
+  const shareCard = useRef<Svg>(null);
   const [landed, setLanded] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   const gilded = isGildedNight(nightIndex);
   const art = stickerAssetForNight(completedStickerAssets, nightIndex);
@@ -116,17 +127,88 @@ export function RewardScreen({ nightIndex, keptCount, targetLength, onDone, onSh
 
   const waitsForPerson = ceremony.waits || screenReaderEnabled === true;
 
+  const shareImage = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const svg = shareCard.current;
+        if (!svg) {
+          reject(new Error('The share image is still being prepared. Try again.'));
+          return;
+        }
+        const timeout = setTimeout(() => reject(new Error('The share image took too long to prepare. Try again.')), 5000);
+        svg.toDataURL((value) => {
+          clearTimeout(timeout);
+          if (value) resolve(value);
+          else reject(new Error('The share image could not be created.'));
+        }, { width: 1080, height: 1350 });
+      });
+      await onShare(base64);
+    } finally {
+      setSharing(false);
+    }
+  };
+
   return (
     <Screen variant="night" contentStyle={styles.screen}>
+      {/* Kept mounted at a real size so react-native-svg can rasterize a crisp
+          4:5 share image. It is laid out well outside the viewport rather than
+          using opacity: 0, because Android includes the root view's opacity
+          when toDataURL captures it. */}
+      <Svg
+        ref={shareCard}
+        width={360}
+        height={450}
+        viewBox="0 0 1080 1350"
+        pointerEvents="none"
+        accessibilityElementsHidden
+        style={styles.shareCardRenderer}
+      >
+        <Defs>
+          <SvgLinearGradient id="share-background" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor="#4A2737" />
+            <Stop offset="0.56" stopColor="#2E1721" />
+            <Stop offset="1" stopColor="#1F0E17" />
+          </SvgLinearGradient>
+          <SvgLinearGradient id="share-halo" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor="#E4C27A" stopOpacity="0.34" />
+            <Stop offset="1" stopColor="#BE6F7C" stopOpacity="0.08" />
+          </SvgLinearGradient>
+        </Defs>
+        <Rect width="1080" height="1350" fill="url(#share-background)" />
+        <Circle cx="540" cy="470" r="310" fill="url(#share-halo)" />
+        <Circle cx="540" cy="470" r="244" fill="#3B2030" stroke="#E4C27A" strokeWidth="3" opacity="0.88" />
+        <SvgImage href={art} x="310" y="240" width="460" height="460" preserveAspectRatio="xMidYMid meet" />
+        <SvgText x="540" y="790" fill="#E4C27A" fontFamily="sans-serif" fontWeight="600" fontSize="30" letterSpacing="7" textAnchor="middle">
+          {`NIGHT ${nightIndex}  /  KEPT`}
+        </SvgText>
+        <SvgText x="540" y="890" fill="#FFFDF9" fontFamily={typography.serifSemiBold} fontSize="64" textAnchor="middle">
+          I showed up tonight.
+        </SvgText>
+        <SvgText x="540" y="956" fill="#D9B9B9" fontFamily={typography.sans} fontSize="31" textAnchor="middle">
+          One quiet question. One night kept.
+        </SvgText>
+        <Rect x="390" y="1060" width="300" height="2" fill="#E4C27A" opacity="0.48" />
+        <SvgText x="540" y="1150" fill="#FFFDF9" fontFamily={typography.monoMedium} fontSize="34" letterSpacing="10" textAnchor="middle">
+          THIRTY NIGHTS
+        </SvgText>
+        <SvgText x="540" y="1205" fill="#D9B9B9" fontFamily={typography.sans} fontSize="27" textAnchor="middle">
+          One question a night.
+        </SvgText>
+      </Svg>
+
       <View style={[styles.stage, { width: stageSize, height: stageSize }]}>
         <Animated.View
-          style={{
+          style={[styles.stickerStage, {
+            width: stageSize,
+            height: stageSize,
             opacity: stickerIn.interpolate({ inputRange: [0, 0.1, 1], outputRange: [0, 1, 1] }),
             transform: [
               { scale: stickerIn.interpolate({ inputRange: [0, 0.7, 1], outputRange: [0.3, 1.12, 1] }) },
               { rotate: stickerIn.interpolate({ inputRange: [0, 1], outputRange: ['-14deg', `${((nightIndex % 5) - 2) * 1.4}deg`] }) },
             ],
-          }}
+          }]}
         >
           <Glow
             size={stageSize}
@@ -174,8 +256,8 @@ export function RewardScreen({ nightIndex, keptCount, targetLength, onDone, onSh
               {ceremony.waits ? 'Keep going' : 'Continue'}
             </Button>
             {ceremony.waits ? (
-              <TextButton onPress={onShare} color={night.candle} accessibilityLabel="Share this night">
-                Share this night
+              <TextButton onPress={() => { if (!sharing) void shareImage(); }} color={night.candle} accessibilityLabel="Share this night as an image">
+                {sharing ? 'Preparing image…' : 'Share this night'}
               </TextButton>
             ) : null}
           </View>
@@ -201,7 +283,7 @@ function ceremonyFor(nightIndex: number, keptCount: number, targetLength: number
       waits: true,
       eyebrow: 'YOUR FIRST NIGHT',
       title: 'You kept your first night.',
-      body: 'This sticker is yours now. One arrives for every night you answer. Your first seven are included, and night 30 completes this journey.',
+      body: 'A sticker arrives for every night you keep. Your first seven are included.',
     };
   }
   if (nightIndex === 7) {
@@ -209,7 +291,7 @@ function ceremonyFor(nightIndex: number, keptCount: number, targetLength: number
       waits: true,
       eyebrow: 'YOUR FIRST REFLECTION',
       title: 'Your first seven nights.',
-      body: `${keptCount} ${keptCount === 1 ? 'answer is' : 'answers are'} kept. Your first reflection comes next. One payment unlocks nights 8–30 in this same journey; nothing renews.`,
+      body: `${keptCount} ${keptCount === 1 ? 'answer' : 'answers'} kept. Your first reflection comes next.`,
     };
   }
   if (targetLength > 7 && keptCount >= targetLength) {
@@ -225,7 +307,7 @@ function ceremonyFor(nightIndex: number, keptCount: number, targetLength: number
       waits: true,
       eyebrow: 'A CHECKPOINT',
       title: `${keptCount} nights kept.`,
-      body: 'Your sheet is filling up. Something to look back on already.',
+      body: 'Your sheet is filling up.',
     };
   }
   if (gilded) {
@@ -233,7 +315,7 @@ function ceremonyFor(nightIndex: number, keptCount: number, targetLength: number
       waits: false,
       eyebrow: 'A GILDED NIGHT',
       title: `You kept night ${nightIndex}.`,
-      body: 'This one came out gilded — the rare kind.',
+      body: 'A rare gilded sticker.',
     };
   }
   return {
@@ -258,9 +340,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  stickerStage: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   glow: {
     position: 'absolute',
-    alignSelf: 'center',
+    top: 0,
+    left: 0,
+  },
+  shareCardRenderer: {
+    position: 'absolute',
+    top: -10000,
+    left: -10000,
   },
   words: {
     alignItems: 'center',

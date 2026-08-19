@@ -11,5 +11,5 @@
       ]
     }
   },
-  "exclude": ["dist", "node_modules", "supabase/functions", "worker"]
+  "exclude": ["dist", "node_modules", "supabase/functions", "worker", "website"]
 }

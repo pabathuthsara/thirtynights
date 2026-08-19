@@ -134,8 +134,8 @@ export function DevRecordingsScreen({ chapters, onBack }: { chapters: Chapter[];
       <Stagger index={0}>
         <Text accessibilityRole="header" style={styles.title}>Every take on this device</Text>
         <Text style={styles.body}>
-          {rows.length} {rows.length === 1 ? 'recording' : 'recordings'}. Playback here ignores the reveal rule.
-          “On disk” is what the file actually measures — if it disagrees with the sealed size, the capture failed.
+          {rows.length} {rows.length === 1 ? 'recording' : 'recordings'}. Playback ignores reveal.
+          On-disk size must match the sealed size.
         </Text>
       </Stagger>
 
@@ -148,7 +148,7 @@ export function DevRecordingsScreen({ chapters, onBack }: { chapters: Chapter[];
       <Stagger index={2}>
         <ScrollView contentContainerStyle={styles.list}>
           {rows.length === 0 ? (
-            <Text style={styles.body}>Nothing recorded yet. Seal a night and it will appear here.</Text>
+            <Text style={styles.body}>No recordings yet. Seal a night to add one.</Text>
           ) : rows.map(({ night }) => {
             const onDisk = disk[night.id];
             const sealed = night.byteSize ?? 0;
