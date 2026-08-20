@@ -37,7 +37,10 @@ test("server-renders the complete Thirty Nights landing page", async () => {
   assert.match(html, /Hear what your life has been trying to tell you\./);
   assert.match(html, /Speak\. Seal\. Return\./);
   assert.match(html, /Your first seven are free/i);
-  assert.match(html, /https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.thirtynights\.app/);
+  assert.match(html, /Coming soon on iOS &amp; Android/i);
+  assert.match(html, /Join the waitlist/i);
+  assert.match(html, /FOUNDING WAITLIST/i);
+  assert.doesNotMatch(html, /Google Play|play\.google\.com/i);
   assert.match(html, /http:\/\/localhost\/og\.png/);
   assert.match(html, /<a class="brand" href="\/" aria-label="Thirty Nights home">/);
   assert.match(html, /favicon-32x32\.png\?v=2/);

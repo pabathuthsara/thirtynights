@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { LegalShell } from "../legal-shell";
 
 const title = "Privacy Policy — Thirty Nights";
-const description = "How Thirty Nights handles voice recordings, account information, purchases, and private reflections.";
+const description = "How Thirty Nights handles waitlist details, voice recordings, account information, purchases, and private reflections.";
 
 export const metadata: Metadata = {
   title,
@@ -46,6 +46,7 @@ export default function PrivacyPage() {
         <ul className="legal-list">
           <li><b>Journal content:</b> voice recordings, transcripts, generated reflections, selected audio excerpts, and report audio.</li>
           <li><b>Account information:</b> an internal user ID, email address, authentication provider, and Sign in with Apple private-relay status.</li>
+          <li><b>Waitlist information:</b> the email address you submit, whether you want iOS, Android, or both launch updates, and the time you joined.</li>
           <li><b>Journey information:</b> question and night identifiers, recording dates and duration, chapter progress, device timezone, reminder preferences, upload consent, and backup state.</li>
           <li><b>Purchase information:</b> product, app store, transaction or order identifiers, currency, price, entitlement, refund, and revocation status. We do not receive your full payment-card number.</li>
           <li><b>Technical and security information:</b> checksums, file size, storage paths, request and error logs, authentication/session data, network availability, and limited device-linked records needed to secure and synchronize the service.</li>
@@ -63,8 +64,9 @@ export default function PrivacyPage() {
           We use information to create and secure your account; keep your nightly schedule;
           store, synchronize, export, and restore your content; transcribe recordings and
           generate the reflections you request; assemble report audio; verify purchases and
-          restore entitlements; prevent fraud and abuse; respond to support and deletion
-          requests; and comply with law. We do not use journal content for advertising.
+          restore entitlements; send the launch updates you request when you join the waitlist;
+          prevent fraud and abuse; respond to support and deletion requests; and comply with
+          law. We do not use journal content for advertising.
         </p>
       </section>
 
@@ -117,6 +119,7 @@ export default function PrivacyPage() {
           <li><b>Cloud account content</b> is retained while your account is active so you can synchronize, restore, export, and receive reflections. A successful account deletion removes it from our active systems.</li>
           <li><b>OpenAI API content</b> may remain in abuse-monitoring logs for up to 30 days under the provider’s default controls, unless a different approved setting or law applies.</li>
           <li><b>Operational logs</b> are kept only for the limited period made available by our hosting providers and as needed to diagnose security or reliability incidents.</li>
+          <li><b>Waitlist information</b> is kept until we send the requested launch updates, you ask us to remove it, or it is no longer needed for the waitlist. You can opt out or request deletion at any time.</li>
           <li><b>Deletion records</b> may retain a one-way account hash, request status, and timestamps so we can demonstrate and secure the deletion process. App stores and payment providers may retain transaction records under their own policies and legal obligations.</li>
         </ul>
         <p>
@@ -134,6 +137,7 @@ export default function PrivacyPage() {
           <li>Export available account metadata, recordings, dates, and reports from Settings.</li>
           <li>Delete only this device’s data or delete the cloud account and associated data.</li>
           <li>Ask to access, correct, delete, restrict, or obtain a copy of personal information, or object where applicable.</li>
+          <li>Ask us to remove your email from the launch waitlist at any time.</li>
         </ul>
         <p>
           Use Settings → Privacy in the app, visit the <a href="/delete-account">account-deletion page</a>,
@@ -147,7 +151,8 @@ export default function PrivacyPage() {
         <h2>9. Legal bases for processing</h2>
         <p>
           Where a legal basis is required, we process account, synchronization, and purchase
-          information to perform our contract with you; recording audio and transcript material
+          information to perform our contract with you; waitlist information and launch updates
+          with your consent; recording audio and transcript material
           for AI-assisted reflections with your consent; limited technical information for our
           legitimate interests in security and reliability; and information as needed to meet
           legal obligations. You can withdraw consent prospectively at any time.

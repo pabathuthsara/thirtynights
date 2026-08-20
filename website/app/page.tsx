@@ -1,7 +1,5 @@
 import Image from "next/image";
-
-const playStoreUrl =
-  "https://play.google.com/store/apps/details?id=com.thirtynights.app";
+import { WaitlistButton } from "./waitlist-button";
 
 const stickerTrail = [
   "/stickers/night-01.png",
@@ -15,18 +13,6 @@ const stickerTrail = [
 
 function Sparkle({ small = false }: { small?: boolean }) {
   return <span className={small ? "sparkle sparkle-small" : "sparkle"} aria-hidden="true">✦</span>;
-}
-
-function GooglePlayButton() {
-  return (
-    <a className="store-button" href={playStoreUrl} target="_blank" rel="noreferrer">
-      <span className="play-mark" aria-hidden="true">▶</span>
-      <span>
-        <small>GET IT ON</small>
-        <strong>Google Play</strong>
-      </span>
-    </a>
-  );
 }
 
 function PhonePreview() {
@@ -88,7 +74,7 @@ export default function Home() {
         <div className="nav-links">
           <a href="#how-it-works">How it works</a>
           <a href="#privacy">Privacy</a>
-          <a className="nav-download" href={playStoreUrl} target="_blank" rel="noreferrer">Get the app</a>
+          <WaitlistButton compact />
         </div>
       </nav>
 
@@ -101,8 +87,8 @@ export default function Home() {
             Seal it, let time pass, then return to the patterns.
           </p>
           <div className="hero-actions">
-            <GooglePlayButton />
-            <span className="availability">Android first · Your first 7 nights are free</span>
+            <WaitlistButton />
+            <span className="availability">Coming soon on iOS &amp; Android · Your first 7 nights are free</span>
           </div>
           <div className="privacy-note">
             <span aria-hidden="true">◇</span>
@@ -176,7 +162,7 @@ export default function Home() {
               <li><span>✓</span> One gentle reminder at your chosen time</li>
               <li><span>✓</span> No subscription and nothing renews</li>
             </ul>
-            <GooglePlayButton />
+            <WaitlistButton />
           </div>
           <div className="sticker-sheet">
             <Image className="sheet-tape" src="/keepsake/washi-tape.png" alt="" width={150} height={150} />
@@ -269,8 +255,8 @@ export default function Home() {
           <div>
             <p className="eyebrow"><Sparkle /> YOUR FIRST SEVEN NIGHTS ARE FREE</p>
             <h2>Tonight&apos;s question is waiting.</h2>
-            <p>Start on Android. No card required.</p>
-            <GooglePlayButton />
+            <p>Coming soon to iOS and Android. Join the founding waitlist for launch news.</p>
+            <WaitlistButton />
           </div>
         </div>
       </section>
