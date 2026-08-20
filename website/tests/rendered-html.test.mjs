@@ -39,6 +39,8 @@ test("server-renders the complete Thirty Nights landing page", async () => {
   assert.match(html, /Your first seven are free/i);
   assert.match(html, /https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.thirtynights\.app/);
   assert.match(html, /http:\/\/localhost\/og\.png/);
+  assert.match(html, /<a class="brand" href="\/" aria-label="Thirty Nights home">/);
+  assert.match(html, /favicon-32x32\.png\?v=2/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
@@ -57,6 +59,8 @@ test("renders every production legal and support route", async () => {
     assert.match(html, heading, route);
     assert.match(html, content, route);
     assert.match(html, /Effective and last updated.*August 20, 2026/, route);
+    assert.match(html, /<a class="brand" href="\/" aria-label="Thirty Nights home">/, route);
+    assert.match(html, /<a class="nav-download" href="\/">Back to the landing page<\/a>/, route);
     assert.doesNotMatch(html, /placeholder|review before launch/i, route);
     assert.doesNotMatch(html, /og\.png/, `${route} should not inherit the landing-page social image`);
   }

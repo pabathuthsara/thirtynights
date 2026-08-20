@@ -79,7 +79,9 @@ export default function Home() {
   return (
     <main>
       <nav className="nav shell" aria-label="Primary navigation">
-        <a className="brand" href="#top" aria-label="Thirty Nights home">
+        {/* A full document navigation keeps the brand link reliable on every deployment target. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a className="brand" href="/" aria-label="Thirty Nights home">
           <Image src="/icon.png" alt="" width={38} height={38} priority />
           <span>Thirty Nights</span>
         </a>
@@ -302,7 +304,8 @@ export default function Home() {
       <footer>
         <div className="shell footer-grid">
           <div className="footer-brand">
-            <a className="brand" href="#top">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a className="brand" href="/" aria-label="Thirty Nights home">
               <Image src="/icon.png" alt="" width={38} height={38} />
               <span>Thirty Nights</span>
             </a>

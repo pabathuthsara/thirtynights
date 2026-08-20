@@ -1,5 +1,4 @@
 import Image from "next/image";
-import Link from "next/link";
 import type { ReactNode } from "react";
 
 export function LegalShell({
@@ -18,11 +17,14 @@ export function LegalShell({
   return (
     <main className="legal-page">
       <nav className="nav shell" aria-label="Legal page navigation">
-        <Link className="brand" href="/" aria-label="Thirty Nights home">
+        {/* A full document navigation is intentional for reliable Vinext routing. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a className="brand" href="/" aria-label="Thirty Nights home">
           <Image src="/icon.png" alt="" width={38} height={38} priority />
           <span>Thirty Nights</span>
-        </Link>
-        <Link className="nav-download" href="/">Back to the landing page</Link>
+        </a>
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a className="nav-download" href="/">Back to the landing page</a>
       </nav>
 
       <header className="legal-hero shell">
@@ -40,13 +42,13 @@ export function LegalShell({
         <div className="shell footer-bottom">
           <span>© {new Date().getFullYear()} Thirty Nights</span>
           <span>
-            <Link href="/privacy">Privacy</Link>
+            <a href="/privacy">Privacy</a>
             {" · "}
-            <Link href="/terms">Terms</Link>
+            <a href="/terms">Terms</a>
             {" · "}
-            <Link href="/support">Support</Link>
+            <a href="/support">Support</a>
             {" · "}
-            <Link href="/delete-account">Account deletion</Link>
+            <a href="/delete-account">Account deletion</a>
           </span>
         </div>
       </footer>
