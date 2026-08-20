@@ -104,7 +104,7 @@ export default function Home() {
           </div>
           <div className="privacy-note">
             <span aria-hidden="true">◇</span>
-            Your recordings stay on your phone until you choose secure backup.
+            Your recording audio stays on your phone until you choose secure backup and processing.
           </div>
         </div>
         <PhonePreview />
@@ -206,7 +206,7 @@ export default function Home() {
             <p className="night-eyebrow"><Sparkle /> PRIVATE BY DESIGN</p>
             <h2>Your voice belongs to you.</h2>
             <p className="privacy-lede">
-              Recording begins locally. Nothing leaves your phone until you choose backup and reflection processing.
+              Recording begins locally. Your voice does not leave your phone until you choose backup and reflection processing.
             </p>
             <div className="privacy-points">
               <article>
@@ -222,7 +222,7 @@ export default function Home() {
                 <p>Export your archive or delete your account and stored recordings.</p>
               </article>
             </div>
-            <a className="paper-link" href="/privacy">Read the privacy placeholder →</a>
+            <a className="paper-link" href="/privacy">Read the privacy policy →</a>
           </div>
         </div>
       </section>
@@ -294,7 +294,7 @@ export default function Home() {
           </details>
           <details>
             <summary>Can I export or delete my data?<span>+</span></summary>
-            <p>Yes. The app includes export and deletion controls, with a web deletion placeholder available below.</p>
+            <p>Yes. The app includes export and deletion controls, and the web deletion page works even if you cannot open the app.</p>
           </details>
         </div>
       </section>
@@ -316,9 +316,10 @@ export default function Home() {
               <a href="#faq">FAQ</a>
             </div>
             <div>
-              <b>Legal placeholders</b>
+              <b>Legal &amp; support</b>
               <a href="/privacy">Privacy policy</a>
               <a href="/terms">Terms &amp; conditions</a>
+              <a href="/support">Support</a>
               <a href="/delete-account">Account deletion</a>
             </div>
           </div>

@@ -6,11 +6,13 @@ export function LegalShell({
   eyebrow,
   title,
   intro,
+  updated = "August 20, 2026",
   children,
 }: {
   eyebrow: string;
   title: string;
   intro: string;
+  updated?: string;
   children: ReactNode;
 }) {
   return (
@@ -27,7 +29,7 @@ export function LegalShell({
         <p className="eyebrow">✦ {eyebrow}</p>
         <h1>{title}</h1>
         <p>{intro}</p>
-        <div className="draft-badge">LOCAL DRAFT PLACEHOLDER · REVIEW BEFORE LAUNCH</div>
+        <div className="legal-status">Effective and last updated {updated}</div>
       </header>
 
       <article className="legal-content shell">
@@ -41,6 +43,8 @@ export function LegalShell({
             <Link href="/privacy">Privacy</Link>
             {" · "}
             <Link href="/terms">Terms</Link>
+            {" · "}
+            <Link href="/support">Support</Link>
             {" · "}
             <Link href="/delete-account">Account deletion</Link>
           </span>

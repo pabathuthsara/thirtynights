@@ -1111,7 +1111,7 @@ footer {
   line-height: 1.65;
 }
 
-.draft-badge {
+.legal-status {
   display: inline-flex;
   margin-top: 30px;
   padding: 10px 14px;
@@ -1167,6 +1167,25 @@ footer {
   text-underline-offset: 3px;
 }
 
+.legal-content section > p + p {
+  margin-top: 18px;
+}
+
+.legal-list {
+  max-width: 760px;
+  display: grid;
+  gap: 12px;
+  margin: 22px 0;
+  padding-left: 23px;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.provider-list li::marker {
+  color: var(--brass);
+}
+
 .delete-steps {
   display: grid;
   gap: 12px;
@@ -1198,7 +1217,7 @@ footer {
   font-size: 11px;
 }
 
-.request-placeholder {
+.request-card {
   margin-block: 45px;
   padding: 38px !important;
   border: 1px solid rgba(184, 89, 104, 0.2) !important;
@@ -1206,11 +1225,11 @@ footer {
   background: linear-gradient(135deg, rgba(251, 237, 239, 0.92), rgba(255, 253, 249, 0.8));
 }
 
-.request-placeholder h2 {
+.request-card h2 {
   font-size: 38px;
 }
 
-.request-placeholder .request-button {
+.request-card .request-button {
   width: fit-content;
   min-width: 0;
   min-height: 52px;
@@ -1219,7 +1238,7 @@ footer {
   text-decoration: none;
 }
 
-.request-placeholder > small {
+.request-card > small {
   display: block;
   margin-top: 12px;
   color: var(--ink-faint);
@@ -1500,7 +1519,7 @@ footer {
     padding-block: 55px 90px;
   }
 
-  .request-placeholder {
+  .request-card {
     padding: 27px !important;
   }
 }

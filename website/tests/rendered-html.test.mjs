@@ -42,11 +42,12 @@ test("server-renders the complete Thirty Nights landing page", async () => {
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
-test("renders every local legal placeholder route", async () => {
+test("renders every production legal and support route", async () => {
   const routes = [
-    ["/privacy", /PRIVACY POLICY/, /working local placeholder/],
-    ["/terms", /TERMS &amp; CONDITIONS/, /local drafting placeholder/],
-    ["/delete-account", /ACCOUNT DELETION/, /no web form is connected yet/i],
+    ["/privacy", /PRIVACY POLICY/, /Cloud backup and AI-assisted reflections/],
+    ["/terms", /TERMS &amp; CONDITIONS/, /Purchases and refunds/],
+    ["/delete-account", /ACCOUNT DELETION/, /Start a deletion request/i],
+    ["/support", /SUPPORT/, /How can we help\?/i],
   ];
 
   for (const [route, heading, content] of routes) {
@@ -55,7 +56,8 @@ test("renders every local legal placeholder route", async () => {
     const html = await response.text();
     assert.match(html, heading, route);
     assert.match(html, content, route);
-    assert.match(html, /LOCAL DRAFT PLACEHOLDER · REVIEW BEFORE LAUNCH/, route);
+    assert.match(html, /Effective and last updated.*August 20, 2026/, route);
+    assert.doesNotMatch(html, /placeholder|review before launch/i, route);
     assert.doesNotMatch(html, /og\.png/, `${route} should not inherit the landing-page social image`);
   }
 });
