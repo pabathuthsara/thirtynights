@@ -34,7 +34,7 @@ test("server-renders the complete Thirty Nights landing page", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Thirty Nights — Hear what time reveals<\/title>/i);
-  assert.match(html, /Hear what your life has been trying to tell you\./);
+  assert.match(html, /A journal you(?:&#x27;|')re not allowed to read\./);
   assert.match(html, /Speak\. Seal\. Return\./);
   assert.match(html, /Your first seven are free/i);
   assert.match(html, /Coming soon on iOS &amp; Android/i);

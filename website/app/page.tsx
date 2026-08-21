@@ -81,7 +81,7 @@ export default function Home() {
       <section className="hero shell" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><Sparkle /> ONE QUESTION · ONE NIGHT AT A TIME</p>
-          <h1>Hear what your life has been trying to tell you.</h1>
+          <h1>A journal you&apos;re not allowed to read.</h1>
           <p className="hero-lede">
             Answer one thoughtful question in your own voice each night.
             Seal it, let time pass, then return to the patterns.
